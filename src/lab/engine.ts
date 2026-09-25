@@ -10,6 +10,22 @@ export interface LabCommit {
   files: Record<string, string>;
 }
 
+export interface GitHubLabState {
+  repository: { name: string; visibility: 'public' | 'private'; readme: boolean; gitignore: boolean; license: boolean } | null;
+  issues: Array<{ title: string; status: 'open' | 'closed'; inProject: boolean; linkedPr: boolean }>;
+  discussions: string[];
+  project: string | null;
+  workflowConfigured: boolean;
+  workflowStatus: 'idle' | 'passed' | 'failed';
+  branchProtection: boolean;
+  collaborator: string | null;
+  dependabot: boolean;
+  secretScanning: boolean;
+  releases: string[];
+  pagesPublished: boolean;
+  packages: string[];
+}
+
 export interface LabState {
   initialized: boolean;
   files: Record<string, string>;
@@ -30,6 +46,7 @@ export interface LabState {
   mergeSource: string | null;
   pullRequestOpen: boolean;
   reviewApproved: boolean;
+  github: GitHubLabState;
   sequence: number;
   lastMotion: MotionKind;
   lastFile: string | null;
@@ -58,7 +75,9 @@ export function createLabState(): LabState {
     files: { 'app.js': 'console.log("Hello Git");', 'index.html': '<h1>Hello Git</h1>', 'style.css': 'color: blue;' },
     changed: [], untracked: ['app.js', 'index.html', 'style.css'], staged: [], commits: [],
     branches: { main: '' }, currentBranch: 'main', remoteUrl: null, remoteBranches: {}, trackingBranches: {},
-    stashes: [], tags: {}, reflog: [], bisecting: false, conflict: null, mergeSource: null, pullRequestOpen: false, reviewApproved: false, sequence: 1,
+    stashes: [], tags: {}, reflog: [], bisecting: false, conflict: null, mergeSource: null, pullRequestOpen: false, reviewApproved: false,
+    github: { repository: null, issues: [], discussions: [], project: null, workflowConfigured: false, workflowStatus: 'idle', branchProtection: false, collaborator: null, dependabot: false, secretScanning: false, releases: [], pagesPublished: false, packages: [] },
+    sequence: 1,
     lastMotion: 'inspect', lastFile: null, lastExplanation: 'A normal folder is waiting to become a Git repository.',
   };
 }
@@ -130,6 +149,34 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
     return finish(state, `${file} changed in the simulated editor.`, `${file} is now ${existed ? 'modified' : 'untracked'} in the working directory.`, 'edit', file);
   }
   if (program === 'gh') {
+    if (action === 'repo' && args[0] === 'create') {
+      const name = args[1];
+      if (!name) return fail(state, 'Usage: gh repo create <name> --public|--private', 'Name the GitHub repository and choose who can see it.');
+      const visibility = args.includes('--private') ? 'private' : 'public';
+      const repository = { name, visibility: visibility as 'public' | 'private', readme: args.includes('--add-readme'), gitignore: args.includes('--gitignore'), license: args.includes('--license') };
+      state = { ...state, github: { ...state.github, repository }, remoteUrl: `https://github.com/you/${name}.git` };
+      return finish(state, `Created ${visibility} GitHub repository you/${name} (simulation).`, 'The remote repository exists on GitHub; the local Git history is a separate copy.', 'remote');
+    }
+    if (action === 'issue' && args[0] === 'create') {
+      if (!state.github.repository) return fail(state, 'Create a GitHub repository first.', 'Issues belong to a repository.');
+      const title = args[args.indexOf('--title') + 1];
+      if (!title || title.startsWith('--')) return fail(state, 'Usage: gh issue create --title "..." --body "..."', 'Give the work item a clear title and description.');
+      state = { ...state, github: { ...state.github, issues: [...state.github.issues, { title, status: 'open', inProject: false, linkedPr: false }] } };
+      return finish(state, `Created issue #${state.github.issues.length}: ${title} (simulation).`, 'An issue tracks a concrete task or bug and can be linked to a project or pull request.', 'remote');
+    }
+    if (action === 'workflow' && args[0] === 'run') {
+      if (!state.github.workflowConfigured) return fail(state, 'No workflow is configured.', 'First add a workflow with a workflow_dispatch trigger. In this lab use: lab workflow configure ci.yml');
+      if (args[1] !== 'ci.yml') return fail(state, 'Workflow not found.', 'Run the configured ci.yml workflow.');
+      state = { ...state, github: { ...state.github, workflowStatus: 'passed' } };
+      return finish(state, 'ci.yml completed: build ✓ test ✓ (simulation).', 'GitHub Actions ran the configured checks. A real workflow executes on GitHub runners.', 'remote');
+    }
+    if (action === 'release' && args[0] === 'create') {
+      const tag = args[1];
+      if (!tag) return fail(state, 'Usage: gh release create <tag> --generate-notes', 'A release needs a version tag.');
+      if (!state.github.repository || !state.remoteBranches.main) return fail(state, 'Publish main before creating a release.', 'A release is built from a published repository revision.');
+      state = { ...state, github: { ...state.github, releases: unique([...state.github.releases, tag]) } };
+      return finish(state, `Published release ${tag} (simulation).`, 'A GitHub Release packages a version with notes and optional downloadable assets.', 'remote');
+    }
     if (action === 'repo' && args[0] === 'fork') return finish(state, 'Fork created on GitHub (simulation).', 'A fork is your own server-side copy of another repository.', 'remote');
     if (action === 'pr' && args[0] === 'create') {
       if (!state.remoteBranches[state.currentBranch]) return fail(state, 'Push your feature branch before opening a PR.', 'A pull request compares a published branch with its target branch.');
@@ -141,9 +188,55 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
     }
     if (action === 'pr' && args[0] === 'merge') {
       if (!state.pullRequestOpen || !state.reviewApproved) return fail(state, 'The PR needs to be opened and approved first.', 'Review is part of the collaboration workflow.');
-      return finish({ ...state, pullRequestOpen: false }, 'Pull request merged (simulation).', 'The reviewed branch was accepted into the target branch.', 'merge');
+      if (state.github.branchProtection && state.github.workflowStatus !== 'passed') return fail(state, 'Required checks have not passed.', 'The main ruleset requires a passing workflow before this pull request can merge.');
+      const issues = state.github.issues.map(issue => issue.linkedPr ? { ...issue, status: 'closed' as const } : issue);
+      const sourceTip = state.remoteBranches[state.currentBranch];
+      return finish({ ...state, pullRequestOpen: false, github: { ...state.github, issues }, remoteBranches: sourceTip ? { ...state.remoteBranches, main: sourceTip } : state.remoteBranches }, 'Pull request merged (simulation).', 'The reviewed branch reached main on GitHub; linked issues were closed.', 'merge');
     }
-    return fail(state, 'Supported GitHub CLI actions: gh repo fork, gh pr create, gh pr review --approve, gh pr merge.', 'Use these to practice the collaboration flow.');
+    return fail(state, 'Supported GitHub CLI actions: repo create/fork, issue create, workflow run, release create, pr create/review/merge.', 'The terminal simulates these GitHub CLI commands; it does not contact your account.');
+  }
+  if (program === 'lab') {
+    if (!state.github.repository) return fail(state, 'Create a GitHub repository first.', 'The lab action needs a repository to change.');
+    if (action === 'repo' && args[0] === 'add-file') {
+      const file = args[1];
+      if (!['README.md', '.gitignore', 'LICENSE'].includes(file)) return fail(state, 'Choose README.md, .gitignore, or LICENSE.', 'These files explain, filter, or license a repository.');
+      const key = file === 'README.md' ? 'readme' : file === '.gitignore' ? 'gitignore' : 'license';
+      const repository = { ...state.github.repository, [key]: true };
+      return finish({ ...state, github: { ...state.github, repository } }, `Added ${file} to the simulated GitHub repository.`, `${file} is now part of the repository setup. Real changes should be committed and pushed.`, 'remote');
+    }
+    if (action === 'discussion' && args[0] === 'create') {
+      const title = args[1];
+      if (!title) return fail(state, 'Usage: lab discussion create "Question"', 'Give the community conversation a topic.');
+      return finish({ ...state, github: { ...state.github, discussions: [...state.github.discussions, title] } }, `Opened discussion: ${title}.`, 'Discussions are for open-ended community conversation; Issues track actionable work.', 'remote');
+    }
+    if (action === 'project' && args[0] === 'create') {
+      const title = args[1];
+      if (!title) return fail(state, 'Usage: lab project create "Roadmap"', 'Name the planning board.');
+      return finish({ ...state, github: { ...state.github, project: title } }, `Created project ${title}.`, 'Projects organize work across issues and pull requests.', 'remote');
+    }
+    if (action === 'project' && args[0] === 'add-issue') {
+      const index = Number(args[1]) - 1;
+      if (!state.github.project || !state.github.issues[index]) return fail(state, 'Create a project and a matching issue first.', 'A project item must point to existing work.');
+      const issues = state.github.issues.map((issue, position) => position === index ? { ...issue, inProject: true } : issue);
+      return finish({ ...state, github: { ...state.github, issues } }, `Added issue #${index + 1} to ${state.github.project}.`, 'The issue now appears on the planning board.', 'remote');
+    }
+    if (action === 'pr' && args[0] === 'link-issue') {
+      const index = Number(args[1]) - 1;
+      if (!state.pullRequestOpen || !state.github.issues[index]) return fail(state, 'Open a PR and choose an existing Issue first.', 'A pull request can reference an Issue it resolves.');
+      const issues = state.github.issues.map((issue, position) => position === index ? { ...issue, linkedPr: true } : issue);
+      return finish({ ...state, github: { ...state.github, issues } }, `Linked Issue #${index + 1} to the open PR.`, 'When the reviewed PR merges, this simulated Issue will close automatically.', 'remote');
+    }
+    if (action === 'workflow' && args[0] === 'configure' && args[1] === 'ci.yml') return finish({ ...state, github: { ...state.github, workflowConfigured: true, workflowStatus: 'idle' } }, 'Configured .github/workflows/ci.yml (simulation).', 'A real Actions workflow is a YAML file committed to the repository; workflow_dispatch enables manual runs.', 'remote');
+    if (action === 'ruleset' && args[0] === 'protect' && args[1] === 'main') return finish({ ...state, github: { ...state.github, branchProtection: true } }, 'Protected main with a ruleset (simulation).', 'Require review and passing checks before merging into main.', 'remote');
+    if (action === 'collaborator' && args[0] === 'invite' && args[1] && args[2]) return finish({ ...state, github: { ...state.github, collaborator: `${args[1]} (${args[2]})` } }, `Invited ${args[1]} with ${args[2]} access (simulation).`, 'Give collaborators only the access they need; the invitation is simulated.', 'remote');
+    if (action === 'security' && args[0] === 'enable' && args[1] === 'dependabot') return finish({ ...state, github: { ...state.github, dependabot: true } }, 'Enabled Dependabot alerts (simulation).', 'Dependency alerts identify vulnerable packages; availability depends on repository settings and plan.', 'remote');
+    if (action === 'security' && args[0] === 'enable' && args[1] === 'secret-scanning') return finish({ ...state, github: { ...state.github, secretScanning: true } }, 'Enabled secret scanning (simulation).', 'Secret scanning helps detect exposed credentials; availability varies by repository and plan.', 'remote');
+    if (action === 'pages' && args[0] === 'publish' && args[1] === 'main') {
+      if (!state.remoteBranches.main) return fail(state, 'Push main before publishing Pages.', 'Pages needs content in the remote repository.');
+      return finish({ ...state, github: { ...state.github, pagesPublished: true } }, 'Published the main branch with GitHub Pages (simulation).', 'Pages serves a static site from the configured source. This lab does not publish a real website.', 'remote');
+    }
+    if (action === 'package' && args[0] === 'publish' && args[1]) return finish({ ...state, github: { ...state.github, packages: unique([...state.github.packages, args[1]]) } }, `Published package ${args[1]} (simulation).`, 'GitHub Packages stores versioned artifacts; a real publish needs authentication and a supported registry.', 'remote');
+    return fail(state, 'Unsupported lab action.', 'Use the current lesson hint. lab actions simulate GitHub website settings and do not change your real account.');
   }
   if (program !== 'git') return fail(state, `Unknown command: ${program}`, 'This is a Git simulator. Use a Git command or edit <filename> to change a file.');
   if (action === '--version') return finish(state, 'git version 2.45.0 (simulation)', 'Git is the local version control tool.');

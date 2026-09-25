@@ -57,6 +57,24 @@ function matchesCommand(actual: string, expected: string): boolean {
 }
 
 function describeCommand(command: string): string {
+  if (command.startsWith('gh repo create')) return 'Create the public web-lab repository on simulated GitHub.';
+  if (command.startsWith('gh issue create')) return 'Create an Issue with a clear title and description.';
+  if (command.startsWith('gh workflow run')) return 'Run the configured build-and-test workflow.';
+  if (command.startsWith('gh release create')) return 'Publish the v1.0.0 release with notes.';
+  if (command.startsWith('gh pr create')) return 'Open the published feature branch as a pull request.';
+  if (command.startsWith('gh pr review')) return 'Approve the proposed change after review.';
+  if (command.startsWith('gh pr merge')) return 'Merge the approved pull request on GitHub.';
+  if (command.startsWith('lab repo add-file')) return `Add ${command.split(' ').slice(-1)[0]} to the simulated repository.`;
+  if (command.startsWith('lab collaborator invite')) return 'Invite a collaborator with limited access.';
+  if (command.startsWith('lab discussion create')) return 'Open a community Discussion.';
+  if (command.startsWith('lab project create')) return 'Create the Roadmap project board.';
+  if (command.startsWith('lab project add-issue')) return 'Add Issue #1 to the project board.';
+  if (command.startsWith('lab pr link-issue')) return 'Connect the open pull request to Issue #1.';
+  if (command.startsWith('lab workflow configure')) return 'Configure the simulated ci.yml Actions workflow.';
+  if (command.startsWith('lab ruleset protect')) return 'Protect main with review and check rules.';
+  if (command.startsWith('lab security enable')) return 'Enable the named repository security feature.';
+  if (command.startsWith('lab pages publish')) return 'Publish the static site with simulated GitHub Pages.';
+  if (command.startsWith('lab package publish')) return 'Publish a simulated versioned package.';
   if (command === 'git init') return 'Start tracking the project with Git.';
   if (command === 'git add .') return 'Stage the project files.';
   if (command.startsWith('git commit')) return 'Save a commit with the requested message.';
@@ -119,6 +137,7 @@ function VisualState({ state, lesson, tick }: { state: LabState; lesson: Lesson 
             </Area>
           </div>
         </LayoutGroup>
+        {(lesson?.module.startsWith('github-') || lesson?.id === 'final-project' || (!lesson && state.github.repository)) && <GitHubWorkspace state={state} lesson={lesson} tick={tick}/>}
         {state.initialized && <button onClick={() => setShowGit(value => !value)} className="mt-3 flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-[#c5c9d8] hover:border-[#a78bfa]/40"><FolderGit2 size={14}/> my-project/.git <ChevronDown size={13} className={showGit ? 'rotate-180' : ''}/></button>}
         {showGit && state.initialized && <div className="mt-2 rounded-lg bg-black/25 p-3 text-xs text-[#aeb3c8]">Git stores commit objects, refs (branch pointers), HEAD, and configuration here. Your working files live outside .git.</div>}
         <div className="relative mt-4 flex items-center gap-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-[#b9bed0]"><Sparkles size={14} className="shrink-0 text-[#e1b5ff]"/><span>{state.lastExplanation}</span>{transfer && <motion.span key={tick} className="absolute bottom-0 left-8 h-[2px] w-8 rounded-full bg-[#8fbdff] shadow-[0_0_12px_#8fbdff]" initial={{ x: transferBack ? 220 : 0 }} animate={{ x: transferBack ? 0 : 220 }} transition={{ duration: reduceMotion ? 0 : 1 }}/>}</div>
@@ -128,6 +147,46 @@ function VisualState({ state, lesson, tick }: { state: LabState; lesson: Lesson 
       <div><button onClick={() => setShowDebug(value => !value)} className="text-xs text-[#9da4be] hover:text-white">{showDebug ? 'Hide' : 'Show'} state inspector <ChevronDown size={12} className="inline"/></button>{showDebug && <div className="mt-2 grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-[#141623] p-3 text-xs"><Metric label="Branch" value={state.currentBranch}/><Metric label="HEAD" value={state.branches[state.currentBranch] || 'empty'}/><Metric label="Working" value={`${working.length} changed`}/><Metric label="Staged" value={`${staged.length} files`}/><Metric label="Commits" value={String(state.commits.length)}/><Metric label="Remote sync" value={remoteTip === state.branches[state.currentBranch] ? 'Up to date' : 'Different'}/><Metric label="Stash" value={String(state.stashes.length)}/><Metric label="PR" value={state.pullRequestOpen ? 'Open' : 'None'}/></div>}</div>
     </div>
   );
+}
+
+function GitHubWorkspace({ state, lesson, tick }: { state: LabState; lesson: Lesson | null; tick: number }) {
+  const gh = state.github;
+  const section = lesson?.module || 'final';
+  const rows: Array<{ label: string; value: string; ready: boolean }> = section === 'github-setup' ? [
+    { label: 'Repository', value: gh.repository ? `${gh.repository.name} · ${gh.repository.visibility}` : 'Not created', ready: !!gh.repository },
+    { label: 'README', value: gh.repository?.readme ? 'Added' : 'Missing', ready: !!gh.repository?.readme },
+    { label: '.gitignore', value: gh.repository?.gitignore ? 'Added' : 'Missing', ready: !!gh.repository?.gitignore },
+    { label: 'LICENSE', value: gh.repository?.license ? 'Added' : 'Missing', ready: !!gh.repository?.license },
+    { label: 'Collaborator', value: gh.collaborator || 'Not invited', ready: !!gh.collaborator },
+  ] : section === 'github-planning' ? [
+    { label: 'Open Issues', value: String(gh.issues.filter(issue => issue.status === 'open').length), ready: gh.issues.length > 0 },
+    { label: 'Discussion', value: gh.discussions[gh.discussions.length - 1] || 'None', ready: gh.discussions.length > 0 },
+    { label: 'Project', value: gh.project || 'None', ready: !!gh.project },
+    { label: 'On project board', value: gh.issues.filter(issue => issue.inProject).map(issue => issue.title).join(', ') || 'No issues yet', ready: gh.issues.some(issue => issue.inProject) },
+  ] : section === 'github-automation' ? [
+    { label: 'Actions workflow', value: gh.workflowConfigured ? 'ci.yml configured' : 'Not configured', ready: gh.workflowConfigured },
+    { label: 'Build & test', value: gh.workflowStatus === 'passed' ? 'Passed' : 'Not run', ready: gh.workflowStatus === 'passed' },
+    { label: 'Main ruleset', value: gh.branchProtection ? 'Protected' : 'Not protected', ready: gh.branchProtection },
+    { label: 'Dependabot', value: gh.dependabot ? 'Enabled' : 'Off', ready: gh.dependabot },
+    { label: 'Secret scanning', value: gh.secretScanning ? 'Enabled' : 'Off', ready: gh.secretScanning },
+  ] : section === 'github-publishing' ? [
+    { label: 'Release', value: gh.releases[gh.releases.length - 1] || 'None', ready: gh.releases.length > 0 },
+    { label: 'GitHub Pages', value: gh.pagesPublished ? 'Published' : 'Not published', ready: gh.pagesPublished },
+    { label: 'Package', value: gh.packages[gh.packages.length - 1] || 'None', ready: gh.packages.length > 0 },
+  ] : [
+    { label: 'Repository', value: gh.repository?.name || 'Not created', ready: !!gh.repository },
+    { label: 'Issue → Project', value: gh.issues.some(issue => issue.inProject) ? 'Planned' : 'Not planned', ready: gh.issues.some(issue => issue.inProject) },
+    { label: 'Issue → PR', value: gh.issues.some(issue => issue.linkedPr) ? 'Linked' : 'Not linked', ready: gh.issues.some(issue => issue.linkedPr) },
+    { label: 'PR reviewed', value: state.reviewApproved ? 'Approved' : 'Pending', ready: state.reviewApproved },
+    { label: 'Checks', value: gh.workflowStatus === 'passed' ? 'Passed' : 'Not run', ready: gh.workflowStatus === 'passed' },
+    { label: 'Release', value: gh.releases[gh.releases.length - 1] || 'None', ready: gh.releases.length > 0 },
+    { label: 'Pages', value: gh.pagesPublished ? 'Published' : 'Not published', ready: gh.pagesPublished },
+  ];
+  return <div className="mt-4 rounded-xl border border-[#78b8ff]/20 bg-[#78b8ff]/[0.035] p-3" aria-label="Simulated GitHub workspace">
+    <div className="mb-2 flex items-center justify-between gap-2"><span className="text-[10px] font-bold uppercase tracking-[.18em] text-[#98c8ff]">GitHub workspace · simulation</span><Cloud size={15} className="text-[#78b8ff]"/></div>
+    <div className="space-y-1.5">{rows.map(row => <motion.div key={row.label} layout className="flex items-center justify-between gap-3 rounded-md border border-white/[0.07] bg-[#0d1422] px-2.5 py-2 text-[11px]"><span className="flex items-center gap-2 text-[#aebbd0]">{row.ready ? <CheckCircle2 size={13} className="text-[#64d0b6]"/> : <Circle size={13} className="text-[#56647d]"/>}{row.label}</span><span className="max-w-[55%] truncate text-right font-medium text-white">{row.value}</span></motion.div>)}</div>
+    <motion.div key={tick} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-2 text-[10px] text-[#8396af]">Browser-only; no real GitHub account is changed.</motion.div>
+  </div>;
 }
 
 function ancestorsInView(state: LabState, hash: string): Set<string> {
