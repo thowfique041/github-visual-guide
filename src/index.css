@@ -13,6 +13,39 @@ body {
   color: #c9d1d9;
 }
 
+html { scroll-behavior: smooth; }
+
+button, a, input, select, textarea { touch-action: manipulation; }
+
+.high-contrast {
+  --tw-ring-color: #ffffff;
+  filter: contrast(1.18);
+}
+
+.large-text { font-size: 112.5%; }
+
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: 0.001ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid #58a6ff;
+  outline-offset: 2px;
+}
+
 /* Custom scrollbar for dark developer theme */
 ::-webkit-scrollbar {
   width: 8px;

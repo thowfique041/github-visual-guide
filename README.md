@@ -11,6 +11,10 @@ An interactive Git and GitHub learning platform that shows repository state chan
 - Scenario-based practice quizzes
 - Problem Solver with searchable real-world errors, diagnostic commands, and risk-labelled recovery paths
 - Safety guidance for destructive commands, history rewrites, and exposed credentials
+- Guided beginner-to-advanced learning path with saved progress and badges
+- Real-project, pull-request, teammate collaboration, Issues and Actions simulations
+- GitHub interface tour and risk-labelled “Undo my mistake” recipes
+- English/Bangla language switcher and accessibility controls
 
 ## Run locally
 

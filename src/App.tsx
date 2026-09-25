@@ -12,6 +12,7 @@ import { PracticeMode } from './components/practice/PracticeMode';
 import { GitHubDocsViewer } from './components/docs/GitHubDocsViewer';
 import { GitVsGitHubExplanation } from './components/docs/GitVsGitHubExplanation';
 import { ProblemSolver } from './components/troubleshooting/ProblemSolver';
+import { LearningHub } from './components/learn/LearningHub';
 import { 
   Terminal, 
   GitBranch, 
@@ -29,8 +30,12 @@ import {
 
 export function App() {
   const [activeTab, setActiveTab] = useState<
-    'catalog' | 'intro' | 'playground' | 'architecture' | 'conflicts' | 'rebase' | 'reset-revert' | 'workflow' | 'practice' | 'docs' | 'troubleshoot'
-  >('catalog');
+    'learn' | 'catalog' | 'intro' | 'playground' | 'architecture' | 'conflicts' | 'rebase' | 'reset-revert' | 'workflow' | 'practice' | 'docs' | 'troubleshoot'
+  >('learn');
+  const [language, setLanguage] = useState<'en' | 'bn'>(() => (localStorage.getItem('git_guide_language') as 'en' | 'bn') || 'en');
+  const [highContrast, setHighContrast] = useState(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [largeText, setLargeText] = useState(false);
 
   const [favorites, setFavorites] = useState<string[]>(() => {
     try {
@@ -50,6 +55,8 @@ export function App() {
       // ignore
     }
   }, [favorites]);
+
+  useEffect(() => { localStorage.setItem('git_guide_language', language); }, [language]);
 
   // Track scroll position for Back-to-Top button
   useEffect(() => {
@@ -71,6 +78,7 @@ export function App() {
   };
 
   const footerLinks = [
+    { id: 'learn', label: 'Learning Path', icon: Sparkles },
     { id: 'catalog', label: 'Commands', icon: BookOpen },
     { id: 'intro', label: 'Git vs GitHub', icon: Sparkles },
     { id: 'architecture', label: '3-Area Flow', icon: Layers },
@@ -85,12 +93,16 @@ export function App() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#0d1117] text-[#c9d1d9] flex flex-col font-sans selection:bg-[#58a6ff]/30 selection:text-white">
+    <div className={`min-h-screen bg-[#0d1117] text-[#c9d1d9] flex flex-col font-sans selection:bg-[#58a6ff]/30 selection:text-white ${highContrast ? 'high-contrast' : ''} ${reduceMotion ? 'reduce-motion' : ''} ${largeText ? 'large-text' : ''}`}>
       {/* Top Navbar */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         savedFavoritesCount={favorites.length}
+        language={language}
+        setLanguage={setLanguage}
+        accessibility={{ highContrast, reduceMotion, largeText }}
+        setAccessibility={{ setHighContrast, setReduceMotion, setLargeText }}
       />
 
       {/* Main Container */}
@@ -108,6 +120,7 @@ export function App() {
         )}
 
         <div id="catalog-content">
+          {activeTab === 'learn' && <LearningHub language={language} onOpenLab={(tab) => { setActiveTab(tab as any); scrollToTop(); }} />}
           {activeTab === 'catalog' && (
             <div className="space-y-8">
               <CommandCatalog
@@ -231,4 +244,3 @@ export function App() {
 }
 
 export default App;
-

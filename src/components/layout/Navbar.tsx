@@ -12,19 +12,30 @@ import {
   Sparkles,
   FileText,
   Menu,
-  X
+  X,
+  Accessibility
 } from 'lucide-react';
 
 interface NavbarProps {
-  activeTab: 'catalog' | 'intro' | 'playground' | 'architecture' | 'conflicts' | 'rebase' | 'reset-revert' | 'workflow' | 'docs' | 'practice' | 'troubleshoot';
+  activeTab: 'learn' | 'catalog' | 'intro' | 'playground' | 'architecture' | 'conflicts' | 'rebase' | 'reset-revert' | 'workflow' | 'docs' | 'practice' | 'troubleshoot';
   setActiveTab: (tab: any) => void;
   savedFavoritesCount: number;
+  language: 'en' | 'bn';
+  setLanguage: (language: 'en' | 'bn') => void;
+  accessibility: { highContrast: boolean; reduceMotion: boolean; largeText: boolean };
+  setAccessibility: {
+    setHighContrast: React.Dispatch<React.SetStateAction<boolean>>;
+    setReduceMotion: React.Dispatch<React.SetStateAction<boolean>>;
+    setLargeText: React.Dispatch<React.SetStateAction<boolean>>;
+  };
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, savedFavoritesCount }) => {
+export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, savedFavoritesCount, language, setLanguage, accessibility, setAccessibility }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [a11yOpen, setA11yOpen] = useState(false);
 
   const navItems = [
+    { id: 'learn', label: 'Start Here', icon: Sparkles },
     { id: 'catalog', label: 'Commands', icon: BookOpen },
     { id: 'intro', label: 'Git vs GitHub', icon: Sparkles },
     { id: 'architecture', label: '3-Area Flow', icon: Layers },
@@ -43,7 +54,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, savedFa
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         {/* Brand */}
         <div 
-          onClick={() => setActiveTab('catalog')} 
+          onClick={() => setActiveTab('learn')}
           className="flex items-center gap-3 cursor-pointer group"
         >
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#238636] to-[#58a6ff] flex items-center justify-center shadow-lg shadow-[#58a6ff]/10 group-hover:scale-105 transition-transform">
@@ -84,6 +95,16 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, savedFa
 
         {/* Actions */}
         <div className="flex items-center gap-2">
+          <button onClick={() => setLanguage(language === 'en' ? 'bn' : 'en')} className="h-9 px-2.5 rounded-lg bg-[#21262d] border border-[#30363d] text-xs font-semibold text-[#c9d1d9]" aria-label="Switch language">
+            {language === 'en' ? 'বাংলা' : 'EN'}
+          </button>
+          <div className="relative">
+            <button onClick={() => setA11yOpen(v => !v)} className="w-9 h-9 flex items-center justify-center rounded-lg bg-[#21262d] border border-[#30363d] text-[#8b949e] hover:text-white" aria-label="Accessibility settings" aria-expanded={a11yOpen}><Accessibility className="w-4 h-4" /></button>
+            {a11yOpen && <div className="absolute right-0 top-11 w-56 rounded-xl bg-[#161b22] border border-[#30363d] shadow-2xl p-3 space-y-2 z-50">
+              <div className="text-xs font-semibold text-white mb-2">Accessibility</div>
+              {[["High contrast", accessibility.highContrast, setAccessibility.setHighContrast], ["Reduce motion", accessibility.reduceMotion, setAccessibility.setReduceMotion], ["Larger text", accessibility.largeText, setAccessibility.setLargeText]].map(([label, value, setter]) => <button key={label as string} onClick={() => (setter as React.Dispatch<React.SetStateAction<boolean>>)(v => !v)} className="w-full flex items-center justify-between text-xs text-[#c9d1d9] p-2 rounded-lg hover:bg-[#21262d]"><span>{label as string}</span><span className={`w-8 h-4 rounded-full p-0.5 ${value ? 'bg-[#238636]' : 'bg-[#30363d]'}`}><span className={`block w-3 h-3 bg-white rounded-full transition-transform ${value ? 'translate-x-4' : ''}`} /></span></button>)}
+            </div>}
+          </div>
           {savedFavoritesCount > 0 && (
             <div className="hidden sm:flex items-center gap-1.5 bg-[#d29922]/10 border border-[#d29922]/30 text-[#d29922] px-2.5 py-1 rounded-lg text-xs font-mono">
               <Bookmark className="w-3.5 h-3.5 fill-current" />
