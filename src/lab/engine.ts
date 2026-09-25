@@ -1,4 +1,4 @@
-export type FileStatus = 'clean' | 'modified' | 'untracked' | 'staged';
+export type FileStatus = 'clean' | 'modified' | 'deleted' | 'untracked' | 'staged';
 export type MotionKind = 'init' | 'edit' | 'add' | 'commit' | 'branch' | 'switch' | 'merge' | 'push' | 'fetch' | 'pull' | 'restore' | 'reset' | 'revert' | 'stash' | 'pop' | 'rebase' | 'remote' | 'inspect';
 
 export interface LabCommit {
@@ -42,6 +42,11 @@ export interface LabState {
   tags: Record<string, string>;
   reflog: Array<{ hash: string; label: string }>;
   bisecting: boolean;
+  bisectGood: string | null;
+  bisectBad: string | null;
+  bisectCulprit: string | null;
+  inspections: string[];
+  visitedBranches: string[];
   conflict: string | null;
   mergeSource: string | null;
   pullRequestOpen: boolean;
@@ -75,7 +80,7 @@ export function createLabState(): LabState {
     files: { 'app.js': 'console.log("Hello Git");', 'index.html': '<h1>Hello Git</h1>', 'style.css': 'color: blue;' },
     changed: [], untracked: ['app.js', 'index.html', 'style.css'], staged: [], commits: [],
     branches: { main: '' }, currentBranch: 'main', remoteUrl: null, remoteBranches: {}, trackingBranches: {},
-    stashes: [], tags: {}, reflog: [], bisecting: false, conflict: null, mergeSource: null, pullRequestOpen: false, reviewApproved: false,
+    stashes: [], tags: {}, reflog: [], bisecting: false, bisectGood: null, bisectBad: null, bisectCulprit: null, inspections: [], visitedBranches: ['main'], conflict: null, mergeSource: null, pullRequestOpen: false, reviewApproved: false,
     github: { repository: null, issues: [], discussions: [], project: null, workflowConfigured: false, workflowStatus: 'idle', branchProtection: false, collaborator: null, dependabot: false, secretScanning: false, releases: [], pagesPublished: false, packages: [] },
     sequence: 1,
     lastMotion: 'inspect', lastFile: null, lastExplanation: 'A normal folder is waiting to become a Git repository.',
@@ -124,9 +129,9 @@ function makeCommit(state: LabState, message: string, parents: string[], files: 
 }
 
 export function fileStatuses(state: LabState): Array<{ name: string; status: FileStatus }> {
-  return Object.keys(state.files).sort().map(name => ({
+  return unique([...Object.keys(state.files), ...state.changed, ...state.staged]).sort().map(name => ({
     name,
-    status: state.staged.includes(name) ? 'staged' : state.untracked.includes(name) ? 'untracked' : state.changed.includes(name) ? 'modified' : 'clean',
+    status: state.staged.includes(name) ? 'staged' : !(name in state.files) ? 'deleted' : state.untracked.includes(name) ? 'untracked' : state.changed.includes(name) ? 'modified' : 'clean',
   }));
 }
 
@@ -147,6 +152,23 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
       changed: existed ? unique([...state.changed, file]) : state.changed,
       untracked: existed ? state.untracked : unique([...state.untracked, file]) };
     return finish(state, `${file} changed in the simulated editor.`, `${file} is now ${existed ? 'modified' : 'untracked'} in the working directory.`, 'edit', file);
+  }
+  if (program === 'touch') {
+    if (!action) return fail(state, 'Usage: touch <filename>', 'Name the new file you want to create.');
+    if (action in state.files) return finish(state, `${action} already exists.`, 'The file was not changed.');
+    return finish({ ...state, files: { ...state.files, [action]: '' }, untracked: unique([...state.untracked, action]) }, `Created ${action}.`, 'The new file is untracked until you stage it.', 'edit', action);
+  }
+  if (program === 'rm') {
+    if (!action || !(action in state.files)) return fail(state, 'Name an existing file to remove.', 'Inspect the working files and choose a valid path.');
+    const files = { ...state.files }; delete files[action];
+    const untracked = state.untracked.filter(name => name !== action);
+    const changed = state.untracked.includes(action) ? state.changed : unique([...state.changed, action]);
+    return finish({ ...state, files, untracked, changed }, `Removed ${action} from the simulated working directory.`, state.untracked.includes(action) ? 'An untracked file was removed.' : 'A tracked deletion is now waiting to be staged.', 'edit', action);
+  }
+  if (program === 'mv') {
+    if (!action || !args[0] || !(action in state.files) || args[0] in state.files) return fail(state, 'Usage: mv <existing-file> <new-file>', 'Choose a source file and an unused destination.');
+    const files = { ...state.files, [args[0]]: state.files[action] }; delete files[action];
+    return finish({ ...state, files, untracked: unique([...state.untracked.filter(name => name !== action), args[0]]), changed: state.untracked.includes(action) ? state.changed : unique([...state.changed, action]) }, `Renamed ${action} to ${args[0]}.`, 'Git sees a deletion and a new path until the change is staged.', 'edit', args[0]);
   }
   if (program === 'gh') {
     if (action === 'repo' && args[0] === 'create') {
@@ -260,15 +282,15 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
       const lines = [`On branch ${state.currentBranch}`];
       if (state.conflict) lines.push(`Merge conflict in ${state.conflict}. Edit the file, stage it, then commit.`);
       if (state.staged.length) lines.push(`Staged: ${state.staged.join(', ')}`);
-      if (state.changed.length) lines.push(`Modified: ${state.changed.join(', ')}`);
+      if (state.changed.length) lines.push(...state.changed.map(file => `${file in state.files ? 'Modified' : 'Deleted'}: ${file}`));
       if (state.untracked.length) lines.push(`Untracked: ${state.untracked.join(', ')}`);
       if (lines.length === 1) lines.push('Working tree clean.');
-      return finish(state, lines.join('\n'), 'Status reads the working directory and staging area without changing either.');
+      return finish({ ...state, inspections: unique([...state.inspections, 'status']) }, lines.join('\n'), 'Status reads the working directory and staging area without changing either.');
     }
     case 'add': {
       if (!args.length) return fail(state, 'Nothing specified for git add.', 'Name a file, or use git add . to stage all changes.');
       const candidates = args[0] === '.' || args[0] === '-A' ? unique([...state.changed, ...state.untracked]) : args;
-      const missing = candidates.find(file => !(file in state.files));
+      const missing = candidates.find(file => !(file in state.files) && !state.changed.includes(file));
       if (missing) return fail(state, `pathspec '${missing}' did not match any file`, 'Check the filename in the working directory and try again.');
       if (!candidates.length) return fail(state, 'No changed files to stage.', 'Edit a file first. The working directory is currently clean.');
       state = { ...state, staged: unique([...state.staged, ...candidates]), changed: state.changed.filter(file => !candidates.includes(file)), untracked: state.untracked.filter(file => !candidates.includes(file)) };
@@ -280,7 +302,7 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
       const message = messageIndex >= 0 ? args[messageIndex + 1] : '';
       if (!message) return fail(state, 'Please provide a commit message with -m.', 'A message explains why this snapshot exists. Try git commit -m "Add login".');
       const files = { ...(commitOf(state, head(state))?.files || {}) };
-      state.staged.forEach(file => { files[file] = state.files[file]; });
+      state.staged.forEach(file => { if (file in state.files) files[file] = state.files[file]; else delete files[file]; });
       state = makeCommit(state, message, state.conflict ? [head(state), state.mergeSource || ''].filter(Boolean) : [head(state)], files);
       state = { ...state, staged: [], conflict: null, mergeSource: null };
       return finish(state, `[${state.currentBranch} ${head(state)}] ${message}`, 'Git created a local snapshot from the staged changes. It has not been sent to GitHub.', 'commit');
@@ -288,17 +310,18 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
     case 'log': {
       const reachable = ancestors(state, head(state));
       const list = [...state.commits].reverse().filter(commit => reachable.has(commit.hash));
-      return finish(state, list.length ? list.map(commit => `${commit.hash} ${commit.message}`).join('\n') : 'No commits yet.', 'Each line represents a commit reachable from the current branch. Click a node in the graph for details.');
+      return finish({ ...state, inspections: unique([...state.inspections, 'log']) }, list.length ? list.map(commit => `${commit.hash} ${commit.message}`).join('\n') : 'No commits yet.', 'Each line represents a commit reachable from the current branch. Click a node in the graph for details.');
     }
     case 'diff': {
       const staged = args.includes('--staged') || args.includes('--cached');
       const names = staged ? state.staged : state.changed;
+      state = { ...state, inspections: unique([...state.inspections, staged ? 'diff-staged' : 'diff']) };
       if (!names.length) return finish(state, 'No differences in this area.', staged ? 'There are no staged changes to compare.' : 'There are no unstaged tracked edits to compare.');
       const earlier = commitOf(state, head(state))?.files || {};
       return finish(state, names.map(file => `diff --git a/${file} b/${file}\n- ${earlier[file] || '(new file)'}\n+ ${state.files[file]}`).join('\n'), `The diff shows the before and after content in ${staged ? 'staging' : 'the working directory'} before a commit.`);
     }
     case 'branch': {
-      if (!args.length) return finish(state, Object.keys(state.branches).map(branch => `${branch === state.currentBranch ? '* ' : '  '}${branch}`).join('\n'), 'A branch is a movable pointer to a commit.');
+      if (!args.length) return finish({ ...state, inspections: unique([...state.inspections, 'branch']) }, Object.keys(state.branches).map(branch => `${branch === state.currentBranch ? '* ' : '  '}${branch}`).join('\n'), 'A branch is a movable pointer to a commit.');
       const name = args[0];
       if (name === '-d' || name === '-D') {
         const target = args[1];
@@ -308,7 +331,9 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
         return finish({ ...state, branches }, `Deleted branch ${target}.`, 'The branch pointer was removed; the commit objects remain until Git prunes them.', 'branch');
       }
       if (state.branches[name] !== undefined) return fail(state, `Branch '${name}' already exists.`, 'Choose a different branch name or switch to the existing branch.');
-      return finish({ ...state, branches: { ...state.branches, [name]: head(state) } }, `Created branch ${name}.`, `The new branch points to ${head(state) || 'the unborn HEAD'}, but HEAD remains on ${state.currentBranch}.`, 'branch');
+      const tip = args[1] ? resolveHash(state, args[1]) : head(state);
+      if (args[1] && !tip) return fail(state, 'Starting commit not found.', 'Use git reflog to identify a recoverable commit hash.');
+      return finish({ ...state, branches: { ...state.branches, [name]: tip } }, `Created branch ${name}.`, `The new branch points to ${tip || 'the unborn HEAD'}, but HEAD remains on ${state.currentBranch}.`, 'branch');
     }
     case 'switch':
     case 'checkout': {
@@ -322,11 +347,11 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
       }
       if (state.branches[name] === undefined) return fail(state, `Unknown branch: ${name}`, 'Create it with git switch -c <name>, or list branches with git branch.');
       const snapshot = commitOf(state, state.branches[name])?.files || state.files;
-      return finish({ ...state, currentBranch: name, files: { ...snapshot }, changed: [], untracked: [], staged: [] }, `Switched to branch '${name}'.`, 'HEAD now points to this branch; the working files match its latest commit.', 'switch');
+      return finish({ ...state, currentBranch: name, files: { ...snapshot }, changed: [], untracked: [], staged: [], visitedBranches: [...state.visitedBranches, name] }, `Switched to branch '${name}'.`, 'HEAD now points to this branch; the working files match its latest commit.', 'switch');
     }
     case 'merge': {
       const name = args[0];
-      const source = name && state.branches[name];
+      const source = name && (state.branches[name] || (name.startsWith('origin/') ? state.trackingBranches[name.slice(7)] : ''));
       if (!name || !source) return fail(state, 'Choose an existing branch to merge.', 'Run git branch to see available branch names.');
       if (name === state.currentBranch) return fail(state, 'Already on the branch you selected.', 'Switch to the receiving branch, then merge the other branch.');
       const current = head(state);
@@ -337,14 +362,14 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
       const baseFiles = common ? commitOf(state, common)?.files || {} : {};
       const ours = commitOf(state, current)?.files || {};
       const conflict = Object.keys(sourceFiles).find(file => ours[file] !== baseFiles[file] && sourceFiles[file] !== baseFiles[file] && ours[file] !== sourceFiles[file]);
-      if (conflict) return fail({ ...state, conflict, mergeSource: source }, `CONFLICT in ${conflict}.`, `Both branches edited ${conflict}. Inspect both versions, edit the final result, stage it, then commit.`);
+      if (conflict) return fail({ ...state, conflict, mergeSource: source, files: { ...state.files, [conflict]: `<<<<<<< HEAD\n${ours[conflict]}\n=======\n${sourceFiles[conflict]}\n>>>>>>> ${name}` }, changed: unique([...state.changed, conflict]) }, `CONFLICT in ${conflict}.`, `Both branches edited ${conflict}. Inspect both versions, edit the final result, stage it, then commit.`);
       const merged = { ...ours };
       Object.keys(sourceFiles).forEach(file => { if (sourceFiles[file] !== baseFiles[file]) merged[file] = sourceFiles[file]; });
       state = makeCommit(state, `Merge branch '${name}'`, [current, source], merged);
       return finish({ ...state, files: { ...merged } }, `Merge made commit ${head(state)}.`, 'Two lines of history converged in a merge commit with two parents.', 'merge');
     }
     case 'remote': {
-      if (args[0] === '-v' || !args.length) return finish(state, state.remoteUrl ? `origin  ${state.remoteUrl} (fetch)\norigin  ${state.remoteUrl} (push)` : 'No remote configured.', 'origin is a nickname for the remote URL.');
+      if (args[0] === '-v' || !args.length) return finish({ ...state, inspections: unique([...state.inspections, 'remote']) }, state.remoteUrl ? `origin  ${state.remoteUrl} (fetch)\norigin  ${state.remoteUrl} (push)` : 'No remote configured.', 'origin is a nickname for the remote URL.');
       if (args[0] === 'add' && args[1] && args[2]) return finish({ ...state, remoteUrl: args[2] }, `Added remote ${args[1]} → ${args[2]}.`, 'The local repository now knows where to send and receive commits.', 'remote');
       return fail(state, 'Usage: git remote add origin <url>', 'Give the remote a name and URL, or run git remote -v to inspect it.');
     }
@@ -381,7 +406,7 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
       if (!file) return fail(state, 'Name a file to restore.', 'Use git restore --staged <file> to unstage without discarding your edit.');
       if (staged) {
         if (!state.staged.includes(file)) return fail(state, `${file} is not staged.`, 'Run git status to see what is in staging.');
-        return finish({ ...state, staged: state.staged.filter(name => name !== file), changed: unique([...state.changed, file]) }, `Unstaged ${file}.`, 'The file returned to the working directory; your edits are still there.', 'restore', file);
+        return finish({ ...state, staged: state.staged.filter(name => name !== file), changed: state.untracked.includes(file) ? state.changed : unique([...state.changed, file]), untracked: (commitOf(state, head(state))?.files || {})[file] === undefined ? unique([...state.untracked, file]) : state.untracked }, `Unstaged ${file}.`, 'The file returned to the working directory; your edits are still there.', 'restore', file);
       }
       if (!state.changed.includes(file)) return fail(state, `${file} has no tracked working changes to restore.`, 'git restore does not discard untracked files. Check git status.');
       const snapshot = commitOf(state, head(state))?.files || {};
@@ -395,7 +420,7 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
       const old = head(state);
       const targetFiles = commitOf(state, target)?.files || {};
       state = { ...state, branches: { ...state.branches, [state.currentBranch]: target }, reflog: [{ hash: old, label: `reset ${mode}: old HEAD` }, ...state.reflog] };
-      const changedFromTarget = Object.keys(state.files).filter(file => state.files[file] !== targetFiles[file]);
+      const changedFromTarget = unique([...Object.keys(state.files), ...Object.keys(targetFiles)]).filter(file => state.files[file] !== targetFiles[file]);
       if (mode === '--soft') state = { ...state, staged: unique([...state.staged, ...changedFromTarget]) };
       if (mode === '--mixed') state = { ...state, staged: [], changed: unique([...state.changed, ...changedFromTarget]) };
       if (mode === '--hard') state = { ...state, files: { ...targetFiles }, staged: [], changed: [], untracked: [] };
@@ -414,18 +439,20 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
       state = makeCommit(state, `Revert "${commit.message}"`, [head(state)], reverted);
       return finish({ ...state, files: { ...reverted }, changed: [], staged: [] }, `Created revert commit ${head(state)}.`, 'Revert adds a new inverse commit. It does not erase shared history.', 'revert');
     }
-    case 'reflog': return finish(state, state.reflog.map(entry => `${entry.hash} ${entry.label}`).join('\n') || 'No HEAD movements yet.', 'Reflog records local pointer movement and can help recover a lost commit.');
+    case 'reflog': return finish({ ...state, inspections: unique([...state.inspections, 'reflog']) }, state.reflog.map(entry => `${entry.hash} ${entry.label}`).join('\n') || 'No HEAD movements yet.', 'Reflog records local pointer movement and can help recover a lost commit.');
     case 'stash': {
-      if (args[0] === 'pop') {
-        const stash = state.stashes[0];
+      if (args[0] === 'list') return finish({ ...state, inspections: unique([...state.inspections, 'stash-list']) }, state.stashes.map((_, index) => `stash@{${index}}: work in progress`).join('\n') || 'No stash entries.', 'Stash entries are numbered newest first.');
+      if (args[0] === 'pop' || args[0] === 'apply') {
+        const index = args[1] ? Number(args[1].match(/stash@\{(\d+)\}/)?.[1]) : 0;
+        const stash = state.stashes[index];
         if (!stash) return fail(state, 'No stash entries found.', 'Make a working change and run git stash first.');
-        return finish({ ...state, files: { ...state.files, ...stash.files }, changed: unique([...state.changed, ...stash.changed]), untracked: unique([...state.untracked, ...stash.untracked]), stashes: state.stashes.slice(1) }, 'Applied and dropped stash@{0}.', 'The shelved changes returned to the working directory.', 'pop');
+        return finish({ ...state, files: { ...state.files, ...stash.files }, changed: unique([...state.changed, ...stash.changed]), untracked: unique([...state.untracked, ...stash.untracked]), stashes: args[0] === 'pop' ? state.stashes.filter((_, position) => position !== index) : state.stashes }, `${args[0] === 'pop' ? 'Applied and dropped' : 'Applied'} stash@{${index}}.`, 'The shelved changes returned to the working directory.', 'pop');
       }
       if (!state.changed.length) return fail(state, 'No tracked changes to save.', 'Edit a tracked file before stashing. By default Git does not stash untracked files; use -u in real Git to include them.');
       const names = [...state.changed];
       const files = Object.fromEntries(names.map(name => [name, state.files[name]]));
       const snapshot = commitOf(state, head(state))?.files || {};
-      state = { ...state, files: { ...state.files, ...Object.fromEntries(names.filter(name => name in snapshot).map(name => [name, snapshot[name]])) }, changed: [], stashes: [{ files, changed: state.changed, untracked: [] }, ...state.stashes] };
+      state = { ...state, files: { ...state.files, ...Object.fromEntries(names.filter(name => name in snapshot).map(name => [name, snapshot[name]])) }, changed: [], stashes: [{ files, changed: names, untracked: [] }, ...state.stashes] };
       return finish(state, 'Saved working changes to stash@{0}.', 'Uncommitted work moved to temporary storage; the working directory is clean.', 'stash');
     }
     case 'rebase': {
@@ -438,6 +465,15 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
       const replay = [...state.commits].filter(commit => ancestors(state, original).has(commit.hash) && !targetAncestors.has(commit.hash) && commit.parents.length <= 1);
       if (!replay.length) return finish(state, 'Current branch is already based on that commit.', 'There are no local commits to replay.', 'rebase');
       state = { ...state, branches: { ...state.branches, [state.currentBranch]: target } };
+      if (interactive) {
+        const files = { ...(commitOf(state, target)?.files || {}) };
+        for (const commit of replay) {
+          const before = commitOf(state, commit.parents[0])?.files || {};
+          unique([...Object.keys(before), ...Object.keys(commit.files)]).filter(file => commit.files[file] !== before[file]).forEach(file => { if (file in commit.files) files[file] = commit.files[file]; else delete files[file]; });
+        }
+        state = makeCommit(state, `squash: ${replay.map(commit => commit.message).join(' + ')}`, [target], files);
+        return finish({ ...state, files: { ...files } }, `Interactive plan: squashed ${replay.length} local commits into ${head(state)}.`, 'The unpublished commits were combined into a new commit with a new hash.', 'rebase');
+      }
       for (const commit of replay) {
         const before = commitOf(state, commit.parents[0])?.files || {};
         const changed = Object.keys(commit.files).filter(file => commit.files[file] !== before[file]);
@@ -466,9 +502,15 @@ export function runLabCommand(previous: LabState, input: string): LabResult {
     }
     case 'bisect': {
       if (args[0] === 'reset') return finish({ ...state, bisecting: false }, 'Bisect ended.', 'Your branch is back to normal inspection.', 'inspect');
-      if (args[0] === 'start') return finish({ ...state, bisecting: true }, 'Bisect started. Mark a bad and a good commit.', 'Git will narrow the regression search between known bad and good states.', 'inspect');
+      if (args[0] === 'start') return finish({ ...state, bisecting: true, bisectGood: null, bisectBad: null, bisectCulprit: null }, 'Bisect started. Mark a bad and a good commit.', 'Git will narrow the regression search between known bad and good states.', 'inspect');
       if (!state.bisecting) return fail(state, 'Bisect has not started.', 'Run git bisect start first.');
-      if (args[0] === 'good' || args[0] === 'bad') return finish(state, `Marked ${args[0]}. Test the next suggested commit.`, 'Bisect cuts the possible regression range after each answer.', 'inspect');
+      if (args[0] === 'good' || args[0] === 'bad') {
+        const marked = resolveHash(state, args[1] || 'HEAD');
+        if (!marked) return fail(state, 'Commit not found.', 'Use git log to find a known good or bad revision.');
+        const next = { ...state, [args[0] === 'good' ? 'bisectGood' : 'bisectBad']: marked };
+        const culprit = next.bisectGood && next.bisectBad && parentOf(next, next.bisectBad) === next.bisectGood ? next.bisectBad : null;
+        return finish({ ...next, bisectCulprit: culprit }, culprit ? `Bisect identified first bad commit: ${culprit}.` : `Marked ${args[0]} ${marked}. Continue narrowing the range.`, culprit ? 'The bad revision immediately follows the known good revision.' : 'Bisect narrows the possible regression range.', 'inspect');
+      }
       return fail(state, 'Use git bisect start, good, bad, or reset.', 'Bisect needs a known good and a known bad point.');
     }
     case 'blame': {

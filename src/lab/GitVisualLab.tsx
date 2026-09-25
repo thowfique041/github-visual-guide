@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Lesson, lessons, modules, scenarioFor } from './curriculum';
 import { createLabState, fileStatuses, LabCommit, LabResult, LabState, runLabCommand } from './engine';
+import { Exercise, exerciseCategories, exercises, exerciseStart } from './exercises';
 
 type Phase = 'learn' | 'watch' | 'practice' | 'challenge' | 'complete';
 type Entry = { command: string; output: string; ok: boolean };
@@ -102,7 +103,7 @@ function VisualState({ state, lesson, tick }: { state: LabState; lesson: Lesson 
   const [showDebug, setShowDebug] = useState(false);
   const reduceMotion = useReducedMotion();
   const files = fileStatuses(state);
-  const working = files.filter(file => file.status === 'modified' || file.status === 'untracked');
+  const working = files.filter(file => file.status === 'modified' || file.status === 'untracked' || file.status === 'deleted');
   const staged = files.filter(file => file.status === 'staged');
   const selected = state.commits.find(commit => commit.hash === selectedCommit) || state.commits[state.commits.length - 1];
   const remoteTip = state.remoteBranches[state.currentBranch] || '';
@@ -137,6 +138,8 @@ function VisualState({ state, lesson, tick }: { state: LabState; lesson: Lesson 
             </Area>
           </div>
         </LayoutGroup>
+        <div className="mt-4 rounded-xl border border-white/10 bg-black/15 p-3"><div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-[#c5cadd]"><FileCode2 size={14}/> Project files <span className="ml-auto font-mono text-[#828aa5]">{files.length}</span></div><div className="grid max-h-32 gap-1 overflow-y-auto sm:grid-cols-2">{files.map(file => <div key={file.name} className="flex min-w-0 items-center justify-between gap-2 rounded-md bg-white/[0.035] px-2 py-1 font-mono text-[10px]"><span className="truncate text-[#d4d8e7]">{file.name}</span><span className={file.status==='clean'?'text-[#8490aa]':file.status==='staged'?'text-[#72d6c4]':file.status==='deleted'?'text-[#f8999f]':'text-[#f7c778]'}>{file.status}</span></div>)}{!files.length && <span className="text-[11px] text-[#778099]">No files yet</span>}</div></div>
+        {state.conflict && <div className="mt-4 rounded-xl border border-rose-400/40 bg-rose-400/10 p-3 text-xs"><div className="font-bold text-rose-200">Merge conflict · {state.conflict}</div><pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-rose-100">{state.files[state.conflict]}</pre><p className="mt-2 text-rose-200/80">Edit the file to its intended final content, stage it, then commit the merge.</p></div>}
         {(lesson?.module.startsWith('github-') || lesson?.id === 'final-project' || (!lesson && state.github.repository)) && <GitHubWorkspace state={state} lesson={lesson} tick={tick}/>}
         {state.initialized && <button onClick={() => setShowGit(value => !value)} className="mt-3 flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-[#c5c9d8] hover:border-[#a78bfa]/40"><FolderGit2 size={14}/> my-project/.git <ChevronDown size={13} className={showGit ? 'rotate-180' : ''}/></button>}
         {showGit && state.initialized && <div className="mt-2 rounded-lg bg-black/25 p-3 text-xs text-[#aeb3c8]">Git stores commit objects, refs (branch pointers), HEAD, and configuration here. Your working files live outside .git.</div>}
@@ -224,7 +227,7 @@ export function GitVisualLab() {
   const [lessonIndex, setLessonIndex] = useState(() => initialLessonIndex(completed));
   const [lessonActivity, setLessonActivity] = useState<LessonActivity>(readLessonActivity);
   const [phase, setPhase] = useState<Phase>('learn');
-  const [mode, setMode] = useState<'course' | 'free'>('course');
+  const [mode, setMode] = useState<'course' | 'free' | 'exercises'>(() => window.location.pathname.startsWith('/exercise') ? 'exercises' : 'course');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [lab, setLab] = useState<LabState>(() => scenarioFor(lessons[initialLessonIndex(completed)]));
   const [history, setHistory] = useState<Entry[]>([]);
@@ -332,6 +335,7 @@ export function GitVisualLab() {
         })}</div>
       </aside>
       <main className="min-w-0 flex-1 px-4 pb-20 pt-6 sm:px-6 xl:px-9">
+        <div className="mb-5 flex flex-wrap gap-2"><button onClick={() => { setMode('exercises'); window.history.pushState(null, '', '/exercises'); }} className={`rounded-lg border px-4 py-2 text-xs font-bold ${mode === 'exercises' ? 'border-[#a78bfa] bg-[#a78bfa] text-[#151020]' : 'border-[#a78bfa]/40 bg-[#a78bfa]/10 text-[#d9ccff] hover:border-[#a78bfa]'}`}>Practical exercises · {exercises.length}</button>{mode === 'exercises' && <button onClick={() => openLesson(lessonIndex)} className="rounded-lg border border-white/15 px-4 py-2 text-xs text-[#d5d8e7]">Back to lessons</button>}</div>
         {mode === 'course' ? <div className="mx-auto max-w-[1220px]">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3 text-xs text-[#9098b1]"><div className="flex items-center gap-2"><BookOpen size={15} className="text-[#a78bfa]"/><span>{currentModule.title}</span><ChevronRight size={13}/><span className="text-[#e7dcff]">{lesson.title}</span></div><span>Lesson {lessonIndex + 1} of {lessons.length}</span></div>
           <div className="mb-6 h-1 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-gradient-to-r from-[#a78bfa] to-[#64c4d9] transition-all" style={{ width: `${((lessonIndex + 1) / lessons.length) * 100}%` }}/></div>
@@ -347,8 +351,82 @@ export function GitVisualLab() {
             </div>
             <div className="min-w-0 xl:sticky xl:top-6"><VisualState state={lab} lesson={lesson} tick={tick}/></div>
           </div>
-        </div> : <div className="mx-auto max-w-[1220px]"><div className="mb-6 flex flex-wrap items-end justify-between gap-3"><div><div className="text-[11px] font-bold uppercase tracking-[.2em] text-[#b9a6ff]">Open sandbox</div><h1 className="mt-2 text-3xl font-bold text-white">Git Playground</h1><p className="mt-2 max-w-xl text-sm text-[#aeb5ca]">Experiment freely. Every command updates the same visual Git model as the course. Nothing runs on your computer.</p></div><button onClick={() => { setMode('course'); openLesson(lessonIndex); }} className="rounded-lg border border-white/15 px-3 py-2 text-xs text-[#d6d9e7]">Return to course</button></div><div className="mb-5 flex flex-wrap gap-2">{([['initial','Fresh folder'],['history','With commit history'],['remote','Connected to GitHub']] as const).map(([type,label]) => <button key={type} onClick={() => loadFreeSample(type)} className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-2 text-xs text-[#c6cade] hover:border-[#a78bfa]/50">{label}</button>)}</div><div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(390px,.92fr)]"><div><TerminalPanel history={history} onRun={run} branch={lab.currentBranch} placeholder="Try git init, git status, edit app.js…"/><p role="status" className="mt-3 rounded-lg border border-white/10 bg-[#141623] p-3 text-xs leading-5 text-[#aeb5ca]">{feedback}</p><button onClick={resetCurrent} className="mt-3 text-xs text-[#aeb5ca] hover:text-white"><RotateCcw size={13} className="mr-1 inline"/> Reset</button></div><VisualState state={lab} lesson={null} tick={tick}/></div></div>}
+        </div> : mode === 'exercises' ? <ExerciseLab/> : <div className="mx-auto max-w-[1220px]"><div className="mb-6 flex flex-wrap items-end justify-between gap-3"><div><div className="text-[11px] font-bold uppercase tracking-[.2em] text-[#b9a6ff]">Open sandbox</div><h1 className="mt-2 text-3xl font-bold text-white">Git Playground</h1><p className="mt-2 max-w-xl text-sm text-[#aeb5ca]">Experiment freely. Every command updates the same visual Git model as the course. Nothing runs on your computer.</p></div><button onClick={() => { setMode('course'); openLesson(lessonIndex); }} className="rounded-lg border border-white/15 px-3 py-2 text-xs text-[#d6d9e7]">Return to course</button></div><div className="mb-5 flex flex-wrap gap-2">{([['initial','Fresh folder'],['history','With commit history'],['remote','Connected to GitHub']] as const).map(([type,label]) => <button key={type} onClick={() => loadFreeSample(type)} className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-2 text-xs text-[#c6cade] hover:border-[#a78bfa]/50">{label}</button>)}</div><div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(390px,.92fr)]"><div><TerminalPanel history={history} onRun={run} branch={lab.currentBranch} placeholder="Try git init, git status, edit app.js…"/><p role="status" className="mt-3 rounded-lg border border-white/10 bg-[#141623] p-3 text-xs leading-5 text-[#aeb5ca]">{feedback}</p><button onClick={resetCurrent} className="mt-3 text-xs text-[#aeb5ca] hover:text-white"><RotateCcw size={13} className="mr-1 inline"/> Reset</button></div><VisualState state={lab} lesson={null} tick={tick}/></div></div>}
       </main>
     </div>
   </div>;
+}
+
+type ExerciseProgress = Record<string, { completed: boolean; attemptCount: number; hintsUsed: number; bestAttempt: number | null }>;
+const EXERCISE_PROGRESS_STORAGE = 'git_visual_lab_exercise_progress_v1';
+function readExerciseProgress(): ExerciseProgress {
+  try { const value = JSON.parse(localStorage.getItem(EXERCISE_PROGRESS_STORAGE) || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
+  catch { return {}; }
+}
+
+function ExerciseLab() {
+  const initialId = window.location.pathname.match(/^\/exercise\/([^/]+)\/?$/)?.[1] || null;
+  const [selectedId, setSelectedId] = useState<string | null>(() => exercises.some(item => item.id === initialId) ? initialId : null);
+  const exercise: Exercise | null = exercises.find(item => item.id === selectedId) || null;
+  const [state, setState] = useState<LabState>(() => exercise ? exerciseStart(exercise) : createLabState());
+  const [history, setHistory] = useState<Entry[]>([]);
+  const [progress, setProgress] = useState<ExerciseProgress>(readExerciseProgress);
+  const [hintCount, setHintCount] = useState(0);
+  const [guidanceOpen, setGuidanceOpen] = useState(false);
+  const [feedback, setFeedback] = useState<string[]>([]);
+  const [success, setSuccess] = useState(false);
+  const [tick, setTick] = useState(0);
+  const [category, setCategory] = useState<string>('All');
+  const completedCount = exercises.filter(item => progress[item.id]?.completed).length;
+  useEffect(() => { try { localStorage.setItem(EXERCISE_PROGRESS_STORAGE, JSON.stringify(progress)); } catch { /* private browsing */ } }, [progress]);
+  useEffect(() => {
+    const onPop = () => {
+      const id = window.location.pathname.match(/^\/exercise\/([^/]+)\/?$/)?.[1] || null;
+      const target = exercises.find(item => item.id === id);
+      setSelectedId(target?.id || null);
+      if (target) { setState(exerciseStart(target)); setHistory([]); setFeedback([]); setSuccess(false); setHintCount(0); }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  const open = (item: Exercise) => {
+    window.history.pushState(null, '', `/exercise/${item.id}`);
+    setSelectedId(item.id); setState(exerciseStart(item)); setHistory([]); setFeedback([]); setSuccess(false); setHintCount(0); setGuidanceOpen(false); setTick(value => value + 1);
+    setProgress(previous => ({ ...previous, [item.id]: { completed: previous[item.id]?.completed || false, attemptCount: (previous[item.id]?.attemptCount || 0) + 1, hintsUsed: previous[item.id]?.hintsUsed || 0, bestAttempt: previous[item.id]?.bestAttempt || null } }));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const back = () => { window.history.pushState(null, '', '/exercises'); setSelectedId(null); setSuccess(false); setFeedback([]); };
+  const reset = () => {
+    if (!exercise) return;
+    setState(exerciseStart(exercise)); setHistory([]); setFeedback([]); setSuccess(false); setHintCount(0); setTick(value => value + 1);
+    setProgress(previous => ({ ...previous, [exercise.id]: { completed: previous[exercise.id]?.completed || false, attemptCount: (previous[exercise.id]?.attemptCount || 0) + 1, hintsUsed: previous[exercise.id]?.hintsUsed || 0, bestAttempt: previous[exercise.id]?.bestAttempt || null } }));
+  };
+  const finishExercise = (item: Exercise, commands: number) => {
+    setSuccess(true); setFeedback([]);
+    setProgress(previous => { const old = previous[item.id]; return { ...previous, [item.id]: { completed: true, attemptCount: old?.attemptCount || 1, hintsUsed: Math.max(old?.hintsUsed || 0, hintCount), bestAttempt: old?.bestAttempt === null || old?.bestAttempt === undefined ? commands : Math.min(old.bestAttempt, commands) } }; });
+  };
+  const runExercise = (command: string) => {
+    if (!exercise) return;
+    if (/^git reset\s+--hard(?:\s|$)/.test(command) && !window.confirm('This simulated hard reset will discard uncommitted work in this exercise. Continue?')) return;
+    const result = runLabCommand(state, command);
+    setState(result.state); setHistory(previous => [...previous, { command, output: result.output, ok: result.ok }]); setTick(value => value + 1);
+    const missing = exercise.check(result.state);
+    if (result.ok && missing.length === 0) finishExercise(exercise, history.length + 1);
+    else { setSuccess(false); setFeedback(result.ok ? [] : [result.explanation]); }
+  };
+  const inspectSolution = () => {
+    if (!exercise) return;
+    const missing = exercise.check(state);
+    if (!missing.length) finishExercise(exercise, history.length);
+    else setFeedback(missing);
+  };
+  const revealHint = () => {
+    if (!exercise || hintCount >= exercise.hints.length) return;
+    const count = hintCount + 1; setHintCount(count);
+    setProgress(previous => ({ ...previous, [exercise.id]: { completed: previous[exercise.id]?.completed || false, attemptCount: previous[exercise.id]?.attemptCount || 1, hintsUsed: Math.max(count, previous[exercise.id]?.hintsUsed || 0), bestAttempt: previous[exercise.id]?.bestAttempt || null } }));
+  };
+  if (!exercise) return <div className="mx-auto max-w-[1220px]"><div className="mb-7"><div className="text-[11px] font-bold uppercase tracking-[.2em] text-[#b9a6ff]">Practice layer · all tasks open</div><h1 className="mt-2 text-3xl font-bold text-white sm:text-4xl">Practical Git Exercises</h1><p className="mt-3 max-w-2xl text-sm leading-7 text-[#aeb5ca]">Solve realistic project situations in the same Git simulator as the lessons. Inspect the state, choose your own commands, and verify the result. No exercise is locked.</p></div><div className="mb-6 rounded-2xl border border-white/10 bg-[#141623] p-5"><div className="flex justify-between text-sm"><span className="font-semibold text-white">Your exercise progress</span><span className="text-[#aeb5ca]">{completedCount} / {exercises.length} complete</span></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-gradient-to-r from-[#a78bfa] to-[#64d0b6]" style={{ width: `${completedCount / exercises.length * 100}%` }}/></div></div><div className="mb-5 flex flex-wrap gap-2">{['All',...exerciseCategories].map(name => <button key={name} onClick={() => setCategory(name)} className={`rounded-full border px-3 py-1.5 text-xs ${category === name ? 'border-[#a78bfa] bg-[#a78bfa]/20 text-white' : 'border-white/10 text-[#aeb5ca] hover:border-white/30'}`}>{name}</button>)}</div><div className="space-y-7">{exerciseCategories.filter(name => category === 'All' || category === name).map(name => <section key={name}><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-semibold text-white">{name}</h2><span className="text-xs text-[#8e97af]">{exercises.filter(item => item.category === name && progress[item.id]?.completed).length} / {exercises.filter(item => item.category === name).length}</span></div><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{exercises.filter(item => item.category === name).map(item => <button key={item.id} onClick={() => open(item)} className="group rounded-xl border border-white/10 bg-[#141623] p-4 text-left transition hover:border-[#a78bfa]/55 hover:bg-[#a78bfa]/[0.06]"><div className="flex items-start gap-2"><span className={`mt-0.5 shrink-0 ${progress[item.id]?.completed ? 'text-[#64d0b6]' : 'text-[#7f86a0]'}`}>{progress[item.id]?.completed ? <CheckCircle2 size={16}/> : <Circle size={16}/>}</span><div><div className="text-sm font-semibold text-white group-hover:text-[#d9cdff]">{item.title}</div><div className="mt-1 text-[11px] text-[#989fb5]">{item.difficulty} · {item.scenario}</div></div></div></button>)}</div></section>)}</div></div>;
+  const record = progress[exercise.id];
+  const missing = exercise.check(state);
+  return <div className="mx-auto max-w-[1220px]"><button onClick={back} className="mb-5 flex items-center gap-2 text-xs text-[#b7a8ee] hover:text-white"><ArrowLeft size={14}/> All exercises</button><div className="mb-6"><div className="flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[.16em] text-[#b9a6ff]"><span>{exercise.category}</span><span className="text-[#737b93]">/</span><span>{exercise.difficulty}</span>{record?.completed && <span className="rounded-full bg-[#64d0b6]/15 px-2 py-1 text-[#64d0b6]">Completed</span>}</div><h1 className="mt-2 text-3xl font-bold text-white sm:text-4xl">{exercise.title}</h1><p className="mt-3 max-w-3xl text-sm leading-7 text-[#b5bdd0]">{exercise.scenario}</p></div><div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(390px,.92fr)]"><div className="min-w-0 space-y-5"><section className="rounded-2xl border border-[#a78bfa]/25 bg-[#a78bfa]/[0.06] p-5"><div className="text-[11px] font-bold uppercase tracking-[.18em] text-[#c7b5ff]">Your objective</div><p className="mt-2 text-sm leading-6 text-white">{exercise.objective}</p>{exercise.files && <div className="mt-3 font-mono text-[11px] text-[#aeb5ca]">Starting files: {Object.keys(exercise.files).join(' · ')}</div>}</section><TerminalPanel history={history} onRun={runExercise} branch={state.currentBranch} placeholder="Inspect Git state, then try a command…"/><div className="flex flex-wrap gap-2"><button onClick={revealHint} disabled={hintCount>=3} className="rounded-lg border border-[#a78bfa]/30 px-3 py-2 text-xs text-[#d8cbff] disabled:opacity-40">💡 Hint {hintCount}/3</button><button onClick={() => setGuidanceOpen(value => !value)} className="rounded-lg border border-white/15 px-3 py-2 text-xs text-[#cbd0df]">{guidanceOpen ? 'Hide' : 'Show'} step-by-step guidance</button><button onClick={reset} className="rounded-lg border border-white/15 px-3 py-2 text-xs text-[#cbd0df]"><RotateCcw size={13} className="mr-1 inline"/> Reset exercise</button><button onClick={inspectSolution} className="rounded-lg bg-[#a78bfa] px-4 py-2 text-xs font-bold text-[#151020]">Check solution</button></div>{hintCount>0 && <div className="rounded-xl border border-[#a78bfa]/20 bg-[#a78bfa]/[0.05] p-4 text-xs text-[#d6caff]">{exercise.hints.slice(0,hintCount).map((hint,index)=><p key={hint} className="mb-2 last:mb-0"><span className="mr-2 font-bold">Hint {index+1}</span>{hint}</p>)}</div>}{guidanceOpen && <ol className="list-decimal space-y-1 rounded-xl border border-white/10 bg-[#141623] px-8 py-4 text-xs text-[#c8ccdc]">{exercise.guidance.map(step=><li key={step}>{step}</li>)}</ol>}{feedback.length>0 && <div role="status" className="rounded-xl border border-amber-300/25 bg-amber-300/[0.07] p-4 text-xs text-[#f4dda9]"><div className="mb-2 font-bold">Not finished yet — inspect this state:</div>{feedback.map(message=><div key={message} className="mb-1">• {message}</div>)}</div>}{success && <motion.section initial={{opacity:0,scale:.97}} animate={{opacity:1,scale:1}} className="rounded-2xl border border-[#64d0b6]/40 bg-gradient-to-br from-[#17312d] to-[#141623] p-6"><CheckCircle2 size={32} className="text-[#74e1c7]"/><h2 className="mt-3 text-2xl font-bold text-white">Exercise complete!</h2><p className="mt-2 text-sm leading-6 text-[#b9d9ce]">{exercise.takeaway}</p><div className="mt-3 text-xs text-[#9ec6b9]">Solved in {history.length} command{history.length===1?'':'s'} · {record?.attemptCount || 1} attempt{(record?.attemptCount||1)===1?'':'s'}</div><button onClick={reset} className="mt-4 rounded-lg border border-[#64d0b6]/40 px-3 py-2 text-xs text-white">Try again</button></motion.section>}</div><div className="min-w-0 xl:sticky xl:top-6"><VisualState state={state} lesson={null} tick={tick}/><div className="mt-3 rounded-xl border border-white/10 bg-[#141623] p-3 text-xs text-[#aeb5ca]">{missing.length ? `${missing.length} objective${missing.length===1?'':'s'} still open. Use Check solution for specific feedback.` : 'Final Git state matches the objective.'}</div></div></div></div>;
 }
