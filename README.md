@@ -1,21 +1,16 @@
-# GitHub Visual Guide
+# Git Visual Lab
 
-An interactive Git and GitHub learning platform that shows repository state changes instead of asking learners to memorize commands.
+An interactive, course-first platform for learning Git and GitHub by seeing what each action changes.
 
-## Features
+## Learning journey
 
-- 39-command searchable reference with before/after explanations
-- Animated working tree, staging, local repository, and remote flow
-- Interactive commit graph and simulated terminal
-- Merge conflict, reset/revert, rebase, and GitHub workflow visualizers
-- Scenario-based practice quizzes
-- Problem Solver with searchable real-world errors, diagnostic commands, and risk-labelled recovery paths
-- Safety guidance for destructive commands, history rewrites, and exposed credentials
-- 18 guided lessons across beginner, intermediate, and advanced levels; each includes a goal, ordered steps, an example, a practice link, and an answer check before progress is saved
-- Contextual links from lessons to visual labs, reference guides, and scenario quizzes
-- Real-project, pull-request, teammate collaboration, Issues and Actions simulations
-- GitHub interface tour and risk-labelled “Undo my mistake” recipes
-- English/Bangla language switcher and accessibility controls
+The 44 lessons span foundations, the Git model, a first workflow, history, branches, remotes, undo, stash, collaboration, advanced Git, and a final project. Each lesson follows **learn → watch → practice → challenge → progress**. Later lessons unlock as the learner completes earlier ones, and progress is saved in the browser.
+
+The guided demonstration runs commands against the same in-browser state model as the terminal. The learner can replay the demonstration, try the command, solve a realistic scenario, and inspect the resulting files, staging area, commit graph, remote state, and optional state panel. A separate playground allows free experimentation.
+
+## Simulator scope
+
+The terminal safely simulates the Git commands taught in the course. It does not run commands on the learner's computer or connect to a real GitHub repository. `edit <file>` represents changing a file in a text editor; a small set of `gh` commands represents fork and pull-request actions. Advanced operations are educational approximations, especially interactive rebase, bisect, and GitHub review.
 
 ## Run locally
 
@@ -24,17 +19,6 @@ npm install
 npm run dev
 ```
 
-Create a production build with:
+Run `npm run build` to check types and produce the production build.
 
-```bash
-npm run build
-npm run preview
-```
-
-## Technology
-
-React, TypeScript, Vite, Tailwind CSS, Framer Motion, and Lucide icons.
-
-## Learning safety
-
-The terminal is a browser-based simulator. It does not execute commands on the learner's computer. Destructive recovery techniques are labelled and should be tested on a backup branch or disposable repository first.
+Built with React, TypeScript, Vite, Tailwind CSS, Framer Motion, SVG, and Lucide icons.
