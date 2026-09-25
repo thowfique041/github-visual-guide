@@ -3,7 +3,7 @@ import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'framer-m
 import {
   ArrowDown, ArrowLeft, ArrowRight, BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight,
   Circle, Cloud, Code2, FileCode2, FolderGit2, GitBranch, GitCommitHorizontal, Layers3,
-  LockKeyhole, Menu, Play, RotateCcw, Send, Sparkles, Terminal, X,
+  Menu, Play, RotateCcw, Send, Sparkles, Terminal, X,
 } from 'lucide-react';
 import { Lesson, lessons, modules, scenarioFor } from './curriculum';
 import { createLabState, fileStatuses, LabCommit, LabResult, LabState, runLabCommand } from './engine';
@@ -11,7 +11,31 @@ import { createLabState, fileStatuses, LabCommit, LabResult, LabState, runLabCom
 type Phase = 'learn' | 'watch' | 'practice' | 'challenge' | 'complete';
 type Entry = { command: string; output: string; ok: boolean };
 const STORAGE = 'git_visual_lab_progress_v1';
+const CURRENT_LESSON_STORAGE = 'git_visual_lab_current_lesson_v1';
+const LESSON_ACTIVITY_STORAGE = 'git_visual_lab_lesson_activity_v1';
 const PRIMARY = '#9d8cff';
+
+type LessonActivity = Record<string, { visualizationCompleted?: boolean; practiceCompleted?: boolean }>;
+
+function readLessonActivity(): LessonActivity {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LESSON_ACTIVITY_STORAGE) || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
+}
+
+function initialLessonIndex(completed: string[]): number {
+  const route = window.location.pathname.match(/^\/lesson\/(\d+)\/?$/);
+  if (route) {
+    const index = Number(route[1]) - 1;
+    if (index >= 0 && index < lessons.length) return index;
+  }
+  let saved: string | null = null;
+  try { saved = localStorage.getItem(CURRENT_LESSON_STORAGE); } catch { /* private browsing */ }
+  const savedIndex = saved ? lessons.findIndex(lesson => lesson.id === saved) : -1;
+  if (savedIndex >= 0) return savedIndex;
+  return Math.max(0, lessons.findIndex(lesson => !completed.includes(lesson.id)));
+}
 
 function readProgress(): string[] {
   try {
@@ -138,12 +162,12 @@ function TerminalPanel({ history, onRun, branch, placeholder, suggested, disable
 
 export function GitVisualLab() {
   const [completed, setCompleted] = useState<string[]>(readProgress);
-  const firstIncomplete = Math.max(0, lessons.findIndex(lesson => !completed.includes(lesson.id)));
-  const [lessonIndex, setLessonIndex] = useState(firstIncomplete);
+  const [lessonIndex, setLessonIndex] = useState(() => initialLessonIndex(completed));
+  const [lessonActivity, setLessonActivity] = useState<LessonActivity>(readLessonActivity);
   const [phase, setPhase] = useState<Phase>('learn');
   const [mode, setMode] = useState<'course' | 'free'>('course');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [lab, setLab] = useState<LabState>(() => scenarioFor(lessons[firstIncomplete]));
+  const [lab, setLab] = useState<LabState>(() => scenarioFor(lessons[initialLessonIndex(completed)]));
   const [history, setHistory] = useState<Entry[]>([]);
   const [step, setStep] = useState(0);
   const [demoStep, setDemoStep] = useState(0);
@@ -152,8 +176,6 @@ export function GitVisualLab() {
   const [hintOpen, setHintOpen] = useState(false);
   const [tick, setTick] = useState(0);
   const lesson = lessons[lessonIndex];
-  const nextIndex = lessons.findIndex(item => !completed.includes(item.id));
-  const unlockedLimit = nextIndex < 0 ? lessons.length - 1 : nextIndex;
   const progress = Math.round((completed.length / lessons.length) * 100);
   const moduleIndex = modules.findIndex(module => module.id === lesson.module);
   const currentModule = modules[moduleIndex];
@@ -161,9 +183,15 @@ export function GitVisualLab() {
   const stageLabels = ['Learn', 'Watch', 'Practice', 'Challenge'];
 
   useEffect(() => { try { localStorage.setItem(STORAGE, JSON.stringify(completed)); } catch { /* private browsing */ } }, [completed]);
+  useEffect(() => { try { localStorage.setItem(CURRENT_LESSON_STORAGE, lesson.id); } catch { /* private browsing */ } }, [lesson.id]);
+  useEffect(() => { try { localStorage.setItem(LESSON_ACTIVITY_STORAGE, JSON.stringify(lessonActivity)); } catch { /* private browsing */ } }, [lessonActivity]);
   useEffect(() => {
     if (!playing || phase !== 'watch') return;
-    if (demoStep >= lesson.demo.length) { setPlaying(false); return; }
+    if (demoStep >= lesson.demo.length) {
+      setPlaying(false);
+      setLessonActivity(previous => ({ ...previous, [lesson.id]: { ...previous[lesson.id], visualizationCompleted: true } }));
+      return;
+    }
     const timer = window.setTimeout(() => {
       const command = lesson.demo[demoStep];
       const result = runLabCommand(lab, command);
@@ -173,11 +201,20 @@ export function GitVisualLab() {
     return () => window.clearTimeout(timer);
   }, [playing, phase, demoStep, lesson, lab]);
 
-  const openLesson = (index: number) => {
-    if (index > unlockedLimit) return;
+  const openLesson = (index: number, updateUrl = true) => {
+    if (index < 0 || index >= lessons.length) return;
+    if (updateUrl && window.location.pathname !== `/lesson/${index + 1}`) window.history.pushState(null, '', `/lesson/${index + 1}`);
     setMode('course'); setLessonIndex(index); setPhase('learn'); setLab(scenarioFor(lessons[index]));
     setHistory([]); setStep(0); setDemoStep(0); setPlaying(false); setFeedback(''); setHintOpen(false); setSidebarOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+  useEffect(() => {
+    const onPopState = () => {
+      const route = window.location.pathname.match(/^\/lesson\/(\d+)\/?$/);
+      if (route) openLesson(Number(route[1]) - 1, false);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  });
   const enterFree = () => { setMode('free'); setLab(createLabState()); setHistory([]); setFeedback('Start with git init, or load a sample scenario.'); setPlaying(false); setSidebarOpen(false); };
   const startDemo = () => { setMode('course'); setPhase('watch'); setLab(scenarioFor(lesson)); setHistory([]); setDemoStep(0); setFeedback('Watch the terminal and the model change together.'); setPlaying(true); setTick(value => value + 1); };
   const startPractice = () => { setPhase('practice'); setLab(scenarioFor(lesson)); setHistory([]); setStep(0); setFeedback('Run the guided command yourself. The model will update immediately.'); setHintOpen(false); setTick(value => value + 1); };
@@ -196,7 +233,10 @@ export function GitVisualLab() {
           setCompleted(previous => previous.includes(lesson.id) ? previous : [...previous, lesson.id]);
           setPhase('complete');
           setFeedback(`Challenge complete. ${lesson.result}`);
-        } else setFeedback(`Nice work. ${lesson.result} Ready for the challenge?`);
+        } else {
+          setLessonActivity(previous => ({ ...previous, [lesson.id]: { ...previous[lesson.id], practiceCompleted: true } }));
+          setFeedback(`Nice work. ${lesson.result} Ready for the challenge?`);
+        }
       } else setFeedback(`${result.explanation} Next: ${describeCommand(activeSequence[following])}`);
     } else setFeedback(`${result.explanation}${target ? ` Your task is still open. ${lesson.hint}` : ''}`);
   };
@@ -212,7 +252,26 @@ export function GitVisualLab() {
     <header className="relative z-20 flex h-16 items-center justify-between border-b border-white/10 bg-[#10121d]/85 px-4 backdrop-blur-xl sm:px-6"><div className="flex items-center gap-3"><button className="rounded-lg p-1.5 text-[#aeb3c8] lg:hidden" onClick={() => setSidebarOpen(true)} aria-label="Open course menu"><Menu size={21}/></button><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-[#a78bfa] to-[#64c4d9] text-[#0b0d17] shadow-[0_8px_25px_rgba(167,139,250,.25)]"><GitBranch size={20}/></div><div><div className="text-[15px] font-bold tracking-tight text-white">Git Visual Lab</div><div className="text-[10px] uppercase tracking-[.2em] text-[#8b91aa]">See what Git does</div></div></div><div className="hidden min-w-52 max-w-72 flex-1 px-6 sm:block"><div className="mb-1 flex justify-between text-[11px] text-[#a9afc5]"><span>Course progress</span><span>{completed.length}/{lessons.length} · {progress}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-gradient-to-r from-[#a78bfa] to-[#64c4d9] transition-all" style={{ width: `${progress}%` }}/></div></div><div className="flex items-center gap-2"><button onClick={() => { openLesson(lessonIndex); setSidebarOpen(true); }} className={`rounded-lg px-3 py-2 text-xs font-semibold ${mode === 'course' ? 'bg-white/10 text-white' : 'text-[#9ca3bc] hover:text-white'}`}>Course</button><button onClick={enterFree} className={`rounded-lg px-3 py-2 text-xs font-semibold ${mode === 'free' ? 'bg-[#a78bfa] text-[#11101a]' : 'border border-white/10 text-[#c8cbe0] hover:border-[#a78bfa]/50'}`}>Free lab</button></div></header>
     <div className="relative mx-auto flex max-w-[1620px]">
       <AnimatePresence>{sidebarOpen && <motion.button initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} onClick={() => setSidebarOpen(false)} aria-label="Close course menu" className="fixed inset-0 z-30 bg-black/65 lg:hidden"/>}</AnimatePresence>
-      <aside className={`fixed inset-y-0 left-0 z-40 w-[300px] overflow-y-auto border-r border-white/10 bg-[#11131f] pt-4 transition-transform lg:sticky lg:top-0 lg:z-10 lg:h-[calc(100vh-64px)] lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}><div className="flex items-center justify-between px-5 pb-4"><div><div className="text-[11px] font-bold uppercase tracking-[.2em] text-[#a78bfa]">Your journey</div><div className="mt-1 text-sm text-[#aeb4c9]">One concept at a time</div></div><button onClick={() => setSidebarOpen(false)} className="lg:hidden" aria-label="Close course menu"><X size={18}/></button></div><div className="space-y-1 px-3 pb-8">{modules.map((module, index) => { const items = lessons.map((item, itemIndex) => ({ item, itemIndex })).filter(({item}) => item.module === module.id); const unlocked = items[0].itemIndex <= unlockedLimit; const active = module.id === lesson.module && mode === 'course'; const done = items.every(({item}) => completed.includes(item.id)); const count = items.filter(({item}) => completed.includes(item.id)).length; return <div key={module.id} className={`rounded-xl border ${active ? 'border-[#a78bfa]/30 bg-[#a78bfa]/[0.07]' : 'border-transparent'}`}><button disabled={!unlocked} onClick={() => openLesson(items.find(({item}) => !completed.includes(item.id))?.itemIndex ?? items[0].itemIndex)} className="flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left disabled:opacity-45"><div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${done ? 'bg-[#62d1b5]/20 text-[#62d1b5]' : active ? 'bg-[#a78bfa]/25 text-[#d7cafa]' : 'bg-white/5 text-[#838aa3]'}`}>{done ? <Check size={14}/> : unlocked ? <span className="text-[10px] font-bold">{index+1}</span> : <LockKeyhole size={12}/>}</div><div className="min-w-0 flex-1"><div className="text-xs font-semibold text-white">{module.title}</div><div className="mt-1 text-[11px] leading-snug text-[#818aa3]">{module.subtitle}</div><div className="mt-1 text-[10px] text-[#a78bfa]">{count}/{items.length} complete</div></div>{active && <ChevronDown size={15} className="shrink-0 text-[#a78bfa]"/>}</button>{active && <div className="mb-2 ml-9 space-y-0.5 border-l border-white/10 pl-3">{items.map(({item,itemIndex}) => <button key={item.id} disabled={itemIndex > unlockedLimit} onClick={() => openLesson(itemIndex)} className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] disabled:opacity-40 ${itemIndex === lessonIndex ? 'bg-[#a78bfa]/15 font-semibold text-[#e3d8ff]' : 'text-[#9da4bc] hover:bg-white/5'}`}>{completed.includes(item.id) ? <CheckCircle2 size={13} className="shrink-0 text-[#64d0b6]"/> : itemIndex > unlockedLimit ? <LockKeyhole size={12} className="shrink-0"/> : <Circle size={12} className="shrink-0"/>}<span className="truncate">{item.title}</span></button>)}</div>}</div>; })}</div></aside>
+      <aside className={`fixed inset-y-0 left-0 z-40 w-[300px] overflow-y-auto border-r border-white/10 bg-[#11131f] pt-4 transition-transform lg:sticky lg:top-0 lg:z-10 lg:h-[calc(100vh-64px)] lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="flex items-center justify-between px-5 pb-4"><div><div className="text-[11px] font-bold uppercase tracking-[.2em] text-[#a78bfa]">Your journey</div><div className="mt-1 text-sm text-[#aeb4c9]">Explore any lesson</div></div><button onClick={() => setSidebarOpen(false)} className="lg:hidden" aria-label="Close course menu"><X size={18}/></button></div>
+        <div className="space-y-2 px-3 pb-8">{modules.map((module, index) => {
+          const items = lessons.map((item, itemIndex) => ({ item, itemIndex })).filter(({ item }) => item.module === module.id);
+          const active = module.id === lesson.module && mode === 'course';
+          const done = items.every(({ item }) => completed.includes(item.id));
+          const count = items.filter(({ item }) => completed.includes(item.id)).length;
+          return <div key={module.id} className={`rounded-xl border ${active ? 'border-[#a78bfa]/30 bg-[#a78bfa]/[0.07]' : 'border-white/[0.04]'}`}>
+            <button onClick={() => openLesson(items.find(({ item }) => !completed.includes(item.id))?.itemIndex ?? items[0].itemIndex)} className="flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left">
+              <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${done ? 'bg-[#62d1b5]/20 text-[#62d1b5]' : active ? 'bg-[#a78bfa]/25 text-[#d7cafa]' : 'bg-white/5 text-[#838aa3]'}`}>{done ? <Check size={14}/> : <span className="text-[10px] font-bold">{index + 1}</span>}</div>
+              <div className="min-w-0 flex-1"><div className="text-xs font-semibold text-white">{module.title}</div><div className="mt-1 text-[11px] leading-snug text-[#818aa3]">{module.subtitle}</div><div className="mt-1 text-[10px] text-[#a78bfa]">{count}/{items.length} complete</div></div>
+              {active && <ChevronDown size={15} className="shrink-0 text-[#a78bfa]"/>}
+            </button>
+            <div className="mb-2 ml-9 space-y-0.5 border-l border-white/10 pl-3">{items.map(({ item, itemIndex }) => <button key={item.id} onClick={() => openLesson(itemIndex)} aria-current={mode === 'course' && itemIndex === lessonIndex ? 'page' : undefined} className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] ${mode === 'course' && itemIndex === lessonIndex ? 'bg-[#a78bfa]/15 font-semibold text-[#e3d8ff]' : 'text-[#9da4bc] hover:bg-white/5'}`}>
+              {completed.includes(item.id) ? <CheckCircle2 size={13} className="shrink-0 text-[#64d0b6]"/> : mode === 'course' && itemIndex === lessonIndex ? <Play size={12} className="shrink-0 text-[#c9baff]"/> : <Circle size={12} className="shrink-0"/>}
+              <span className="shrink-0 font-mono text-[10px] text-[#707a95]">{String(itemIndex + 1).padStart(2, '0')}</span><span className="truncate">{item.title}</span>
+            </button>)}</div>
+          </div>;
+        })}</div>
+      </aside>
       <main className="min-w-0 flex-1 px-4 pb-20 pt-6 sm:px-6 xl:px-9">
         {mode === 'course' ? <div className="mx-auto max-w-[1220px]">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3 text-xs text-[#9098b1]"><div className="flex items-center gap-2"><BookOpen size={15} className="text-[#a78bfa]"/><span>{currentModule.title}</span><ChevronRight size={13}/><span className="text-[#e7dcff]">{lesson.title}</span></div><span>Lesson {lessonIndex + 1} of {lessons.length}</span></div>
@@ -225,7 +284,7 @@ export function GitVisualLab() {
               {phase === 'watch' && <section className="rounded-2xl border border-white/10 bg-[#141623] p-5 sm:p-7"><div className="text-[11px] font-bold uppercase tracking-[.2em] text-[#b9a6ff]">02 / Watch the visualization</div><h2 className="mt-3 text-xl font-semibold text-white">Guided demonstration</h2><p className="mt-2 text-sm text-[#aeb5ca]">The simulator runs each step and explains the resulting Git state.</p><div className="mt-5 grid gap-2">{lesson.demo.map((command,index) => <div key={`${command}-${index}`} className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 font-mono text-xs ${index < demoStep ? 'border-[#64d0b6]/30 bg-[#64d0b6]/[0.06] text-[#bdf8e9]' : index === demoStep ? 'border-[#a78bfa]/40 bg-[#a78bfa]/[0.08] text-white' : 'border-white/10 text-[#7e879e]'}`}><span className="w-5">{index < demoStep ? <Check size={15}/> : String(index+1).padStart(2,'0')}</span><span className="break-all">{command}</span></div>)}</div><div className="mt-5"><TerminalPanel history={history} onRun={() => {}} branch={lab.currentBranch} placeholder="Watch the guided command run" disabled/></div><div className="mt-4 flex flex-wrap gap-2"><button onClick={startDemo} className="rounded-lg border border-white/15 px-4 py-2.5 text-xs font-semibold text-[#cbd0e0] hover:border-[#a78bfa]/50"><RotateCcw size={14} className="mr-1.5 inline"/> Replay</button><button onClick={startPractice} disabled={playing} className="rounded-lg bg-[#a78bfa] px-4 py-2.5 text-xs font-bold text-[#151020] disabled:opacity-40">Try it yourself <ArrowRight size={14} className="ml-1 inline"/></button></div></section>}
               {(phase === 'practice' || phase === 'challenge') && <section className="rounded-2xl border border-white/10 bg-[#141623] p-5 sm:p-7"><div className="text-[11px] font-bold uppercase tracking-[.2em] text-[#b9a6ff]">{phase === 'practice' ? '03 / Practice' : '04 / Challenge'}</div><h2 className="mt-3 text-xl font-semibold text-white">{phase === 'practice' ? 'Try it yourself' : 'Solve the scenario'}</h2><p className="mt-2 text-sm leading-6 text-[#aeb5ca]">{phase === 'practice' ? lesson.concept : lesson.problem}</p><div className="mt-5 rounded-xl border border-[#a78bfa]/25 bg-[#a78bfa]/[0.06] p-4"><div className="flex justify-between gap-3 text-xs"><span className="font-semibold text-[#d5c7ff]">Step {Math.min(step+1,activeSequence.length)} / {activeSequence.length}</span><span className="text-[#98a0b9]">{phase === 'practice' ? 'Guided' : 'Your challenge'}</span></div><p className="mt-2 text-sm font-medium text-white">{step < activeSequence.length ? describeCommand(activeSequence[step]) : 'All steps complete.'}</p></div><div className="mt-5"><TerminalPanel history={history} onRun={run} branch={lab.currentBranch} placeholder="Type a Git command or edit a file" suggested={phase === 'practice' && step < activeSequence.length ? activeSequence[step] : undefined} disabled={step >= activeSequence.length}/></div><div role="status" className="mt-4 rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-xs leading-5 text-[#c2c9dd]">{feedback}</div><div className="mt-4 flex flex-wrap items-center gap-3"><button onClick={resetCurrent} className="rounded-lg border border-white/15 px-3 py-2 text-xs text-[#c9cbd9] hover:border-[#a78bfa]/50"><RotateCcw size={13} className="mr-1 inline"/> Reset scenario</button><button onClick={() => setHintOpen(value => !value)} className="text-xs text-[#c9bbff] hover:underline">{hintOpen ? 'Hide hint' : 'Need a hint?'}</button>{phase === 'practice' && step >= activeSequence.length && <button onClick={startChallenge} className="ml-auto rounded-lg bg-[#a78bfa] px-4 py-2 text-xs font-bold text-[#151020]">Start challenge <ArrowRight size={13} className="ml-1 inline"/></button>}</div>{hintOpen && <p className="mt-3 text-xs text-[#aeb5ca]">{lesson.hint}</p>}</section>}
               {phase === 'complete' && <section className="rounded-2xl border border-[#64d0b6]/30 bg-gradient-to-br from-[#16312d] to-[#141623] p-7"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#64d0b6]/20 text-[#7ee2c9]"><CheckCircle2 size={27}/></div><h2 className="mt-4 text-2xl font-bold text-white">{lesson.id === 'final-project' ? 'Project complete!' : 'Lesson complete'}</h2><p className="mt-3 text-sm leading-7 text-[#b8d5cd]">{feedback}</p>{lesson.id === 'final-project' && <div className="mt-5 grid grid-cols-2 gap-2 text-xs"><Metric label="Commits" value={String(lab.commits.length)}/><Metric label="Branches" value={String(Object.keys(lab.branches).length)}/><Metric label="Merged" value={lab.commits.some(commit => commit.parents.length > 1) || lab.branches.main === lab.branches.feature ? 'Yes' : 'No'}/><Metric label="Pushed" value={lab.remoteBranches.main ? 'Yes' : 'No'}/></div>}<div className="mt-6 flex flex-wrap gap-2">{lessonIndex < lessons.length - 1 && <button onClick={() => openLesson(lessonIndex+1)} className="rounded-xl bg-[#a78bfa] px-5 py-3 text-sm font-bold text-[#151020]">Next lesson <ArrowRight size={15} className="ml-1 inline"/></button>}<button onClick={() => openLesson(lessonIndex)} className="rounded-xl border border-white/20 px-4 py-3 text-sm text-white">Replay lesson</button></div></section>}
-              <div className="flex items-center justify-between gap-3 text-xs text-[#8a92aa]"><button onClick={() => openLesson(Math.max(0,lessonIndex-1))} disabled={lessonIndex===0} className="flex items-center gap-1 disabled:opacity-30"><ArrowLeft size={14}/> Previous</button><span>{currentModule.title}</span><button onClick={() => openLesson(lessonIndex+1)} disabled={lessonIndex>=unlockedLimit || lessonIndex===lessons.length-1} className="flex items-center gap-1 disabled:opacity-30">Next <ArrowRight size={14}/></button></div>
+              <div className="flex items-center justify-between gap-3 text-xs text-[#8a92aa]"><button onClick={() => openLesson(lessonIndex-1)} disabled={lessonIndex===0} className="flex items-center gap-1 disabled:opacity-30"><ArrowLeft size={14}/> Previous lesson</button><span>{currentModule.title}</span><button onClick={() => openLesson(lessonIndex+1)} disabled={lessonIndex===lessons.length-1} className="flex items-center gap-1 disabled:opacity-30">Next lesson <ArrowRight size={14}/></button></div>
             </div>
             <div className="min-w-0 xl:sticky xl:top-6"><VisualState state={lab} lesson={lesson} tick={tick}/></div>
           </div>
