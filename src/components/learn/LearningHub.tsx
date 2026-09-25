@@ -4,26 +4,14 @@ import {
   Cloud, Code2, GitBranch, GitCommit, GitMerge, GitPullRequest, Github,
   Play, RefreshCcw, Rocket, ShieldAlert, Users, Wand2, XCircle
 } from 'lucide-react';
+import { courseLessons, CourseLevel } from '../../data/learningPath';
 
 type Language = 'en' | 'bn';
-type Level = 'beginner' | 'intermediate' | 'advanced';
 
 interface LearningHubProps {
   language: Language;
   onOpenLab: (tab: string) => void;
 }
-
-const lessons = [
-  { id: 'repo', en: 'Repository basics', bn: 'Repository পরিচিতি', note: 'Create a safe home for project history.' },
-  { id: 'clone', en: 'Clone a project', bn: 'Project clone করা', note: 'Copy a remote repository to your computer.' },
-  { id: 'edit', en: 'Edit & inspect', bn: 'Edit ও status দেখা', note: 'See how Git detects file changes.' },
-  { id: 'stage', en: 'Stage changes', bn: 'Changes stage করা', note: 'Choose exactly what belongs in the next snapshot.' },
-  { id: 'commit', en: 'Create a commit', bn: 'Commit তৈরি করা', note: 'Save a meaningful checkpoint locally.' },
-  { id: 'push', en: 'Push to GitHub', bn: 'GitHub-এ push করা', note: 'Publish local commits to the remote.' },
-  { id: 'branch', en: 'Work on a branch', bn: 'Branch-এ কাজ করা', note: 'Build safely without disturbing main.' },
-  { id: 'pr', en: 'Open a pull request', bn: 'Pull request খোলা', note: 'Ask teammates to review the change.' },
-  { id: 'merge', en: 'Review & merge', bn: 'Review ও merge করা', note: 'Bring an approved change into main.' },
-];
 
 const projectSteps = [
   { command: 'Edit index.html', area: 'Working tree', detail: 'index.html becomes modified.', color: '#f85149' },
@@ -51,10 +39,16 @@ const tour = [
 ];
 
 export const LearningHub: React.FC<LearningHubProps> = ({ language, onOpenLab }) => {
-  const [level, setLevel] = useState<Level>('beginner');
+  const [level, setLevel] = useState<CourseLevel>('beginner');
   const [completed, setCompleted] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('git_guide_lessons') || '[]'); } catch { return []; }
+    try {
+      const saved = JSON.parse(localStorage.getItem('git_guide_course_verified_v2') || '[]');
+      return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === 'string' && courseLessons.some(lesson => lesson.id === id)) : [];
+    } catch { return []; }
   });
+  const [selectedId, setSelectedId] = useState('repo');
+  const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [projectStep, setProjectStep] = useState(0);
   const [prStep, setPrStep] = useState(0);
   const [collabStep, setCollabStep] = useState(0);
@@ -64,19 +58,35 @@ export const LearningHub: React.FC<LearningHubProps> = ({ language, onOpenLab })
   const [tourIndex, setTourIndex] = useState(0);
 
   useEffect(() => {
-    try { localStorage.setItem('git_guide_lessons', JSON.stringify(completed)); } catch { /* ignore */ }
+    try { localStorage.setItem('git_guide_course_verified_v2', JSON.stringify(completed)); } catch { /* ignore */ }
   }, [completed]);
 
-  const progress = Math.round((completed.length / lessons.length) * 100);
+  const progress = Math.round((completed.length / courseLessons.length) * 100);
+  const levelLessons = courseLessons.filter(lesson => lesson.level === level);
+  const selectedLesson = courseLessons.find(lesson => lesson.id === selectedId) || courseLessons[0];
+  const selectedIndex = courseLessons.findIndex(lesson => lesson.id === selectedLesson.id);
+  const allPreviousComplete = courseLessons.slice(0, selectedIndex).every(lesson => completed.includes(lesson.id));
+  const selectLesson = (id: string) => { setSelectedId(id); setSelectedAnswer(null); setShowFeedback(false); };
+  const selectLevel = (next: CourseLevel) => { setLevel(next); selectLesson(courseLessons.find(lesson => lesson.level === next)!.id); };
+  const checkAnswer = () => {
+    if (selectedAnswer === null) return;
+    setShowFeedback(true);
+    if (selectedAnswer === selectedLesson.answer && allPreviousComplete) {
+      setCompleted(previous => previous.includes(selectedLesson.id) ? previous : [...previous, selectedLesson.id]);
+    }
+  };
+  const nextLesson = () => {
+    const next = courseLessons[selectedIndex + 1];
+    if (next) { setLevel(next.level); selectLesson(next.id); }
+  };
   const badges = useMemo(() => [
     { name: 'First Steps', unlocked: completed.length >= 1 },
     { name: 'Local Hero', unlocked: completed.includes('commit') },
     { name: 'Collaborator', unlocked: completed.includes('pr') },
-    { name: 'Git Graduate', unlocked: completed.length === lessons.length },
+    { name: 'Git Graduate', unlocked: completed.length === courseLessons.length },
   ], [completed]);
 
   const t = (en: string, bn: string) => language === 'bn' ? bn : en;
-  const toggleLesson = (id: string) => setCompleted(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
   return (
     <div className="space-y-8" aria-live="polite">
@@ -91,7 +101,7 @@ export const LearningHub: React.FC<LearningHubProps> = ({ language, onOpenLab })
           <div className="min-w-64 rounded-xl bg-[#0d1117] border border-[#30363d] p-4">
             <div className="flex justify-between text-sm mb-2"><span>{t('Course progress', 'কোর্স অগ্রগতি')}</span><strong className="text-white">{progress}%</strong></div>
             <div className="h-2 rounded-full bg-[#21262d] overflow-hidden"><div className="h-full bg-gradient-to-r from-[#238636] to-[#58a6ff] transition-all" style={{ width: `${progress}%` }} /></div>
-            <p className="text-xs text-[#8b949e] mt-2">{completed.length}/{lessons.length} lessons · saved automatically</p>
+            <p className="text-xs text-[#8b949e] mt-2">{completed.length}/{courseLessons.length} {t('lessons verified · saved automatically', 'টি lesson যাচাই হয়েছে · স্বয়ংক্রিয়ভাবে সংরক্ষিত')}</p>
           </div>
         </div>
       </section>
@@ -99,21 +109,45 @@ export const LearningHub: React.FC<LearningHubProps> = ({ language, onOpenLab })
       <section className="grid lg:grid-cols-[1fr_300px] gap-6">
         <div className="rounded-2xl border border-[#30363d] bg-[#161b22] p-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
-            <div><h2 className="text-xl font-bold text-white">{t('Guided learning path', 'Guided learning path')}</h2><p className="text-sm text-[#8b949e]">{t('Start at the top and build a complete GitHub workflow.', 'উপর থেকে শুরু করে একটি সম্পূর্ণ GitHub workflow তৈরি করুন।')}</p></div>
+            <div><h2 className="text-xl font-bold text-white">{t('Guided learning path', 'ধাপে ধাপে শেখার পথ')}</h2><p className="text-sm text-[#8b949e]">{t('Read, try the example, then answer the check. Finish lessons in order to unlock the next one.', 'ব্যাখ্যা পড়ুন, উদাহরণ চেষ্টা করুন, তারপর প্রশ্নের উত্তর দিন। ক্রমানুসারে lesson শেষ করলে পরেরটি খুলবে।')}</p></div>
             <div className="flex bg-[#0d1117] border border-[#30363d] p-1 rounded-lg" aria-label="Difficulty level">
-              {(['beginner', 'intermediate', 'advanced'] as Level[]).map(item => <button key={item} onClick={() => setLevel(item)} className={`px-2.5 py-1.5 rounded-md text-xs capitalize ${level === item ? 'bg-[#238636] text-white' : 'text-[#8b949e]'}`}>{item}</button>)}
+              {(['beginner', 'intermediate', 'advanced'] as CourseLevel[]).map(item => <button key={item} onClick={() => selectLevel(item)} aria-pressed={level === item} className={`px-2.5 py-1.5 rounded-md text-xs capitalize ${level === item ? 'bg-[#238636] text-white' : 'text-[#8b949e]'}`}>{item}</button>)}
             </div>
           </div>
-          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            {lessons.map((lesson, index) => {
+          <p className="text-xs text-[#8b949e] mb-3">{levelLessons.filter(lesson => completed.includes(lesson.id)).length}/{levelLessons.length} {t('complete in this level', 'এই স্তরে সম্পূর্ণ')}</p>
+          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3 mb-5">
+            {levelLessons.map((lesson, index) => {
               const done = completed.includes(lesson.id);
-              return <button key={lesson.id} onClick={() => toggleLesson(lesson.id)} className={`text-left p-4 rounded-xl border transition-all focus:outline-none focus:ring-2 focus:ring-[#58a6ff] ${done ? 'bg-[#238636]/10 border-[#238636]/50' : 'bg-[#0d1117] border-[#30363d] hover:border-[#58a6ff]/60'}`}>
-                <div className="flex items-start justify-between"><span className="text-[11px] font-mono text-[#8b949e]">LESSON {String(index + 1).padStart(2, '0')}</span>{done ? <CheckCircle2 className="w-5 h-5 text-[#3fb950]" /> : <Circle className="w-5 h-5 text-[#484f58]" />}</div>
-                <h3 className="text-sm font-semibold text-white mt-3">{language === 'bn' ? lesson.bn : lesson.en}</h3>
-                <p className="text-xs text-[#8b949e] mt-1">{lesson.note}</p>
+              const number = courseLessons.findIndex(item => item.id === lesson.id) + 1;
+              return <button key={lesson.id} onClick={() => selectLesson(lesson.id)} aria-pressed={selectedId === lesson.id} className={`text-left p-4 rounded-xl border transition-all focus:outline-none focus:ring-2 focus:ring-[#58a6ff] ${selectedId === lesson.id ? 'border-[#58a6ff] bg-[#58a6ff]/10' : done ? 'bg-[#238636]/10 border-[#238636]/50' : 'bg-[#0d1117] border-[#30363d] hover:border-[#58a6ff]/60'}`}>
+                <div className="flex items-start justify-between"><span className="text-[11px] font-mono text-[#8b949e]">LESSON {String(number).padStart(2, '0')}</span>{done ? <CheckCircle2 className="w-5 h-5 text-[#3fb950]" /> : <Circle className="w-5 h-5 text-[#484f58]" />}</div>
+                <h3 className="text-sm font-semibold text-white mt-3">{lesson.title}</h3>
+                <p className="text-xs text-[#8b949e] mt-1">{lesson.summary}</p>
               </button>;
             })}
           </div>
+          <article className="rounded-xl border border-[#30363d] bg-[#0d1117] p-4 sm:p-5" aria-labelledby="lesson-title">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-[#58a6ff] uppercase tracking-wide"><BookOpen className="w-4 h-4" /> {selectedLesson.level} · {t('Lesson', 'পাঠ')} {String(selectedIndex + 1).padStart(2, '0')} / {courseLessons.length}</div>
+            <h3 id="lesson-title" className="text-xl font-bold text-white mt-2">{selectedLesson.title}</h3>
+            <p className="text-sm text-[#8b949e] mt-2"><strong className="text-white">{t('Goal:', 'লক্ষ্য:')}</strong> {selectedLesson.goal}</p>
+            <p className="text-sm mt-4 leading-relaxed">{selectedLesson.explanation}</p>
+            <h4 className="font-semibold text-white mt-5">{t('Follow these steps', 'এই ধাপগুলো অনুসরণ করুন')}</h4>
+            <ol className="list-decimal list-inside text-sm text-[#c9d1d9] mt-2 space-y-2">{selectedLesson.steps.map(step => <li key={step}>{step}</li>)}</ol>
+            <pre className="mt-4 rounded-lg border border-[#30363d] bg-black/30 p-3 text-xs text-[#79c0ff] whitespace-pre-wrap overflow-x-auto"><code>{selectedLesson.example}</code></pre>
+            <div className="flex flex-wrap gap-x-5 gap-y-2 mt-3">
+              <button onClick={() => onOpenLab(selectedLesson.lab)} className="text-sm text-[#58a6ff] hover:underline">{selectedLesson.labLabel} <ChevronRight className="inline w-4 h-4" /></button>
+              <button onClick={() => onOpenLab('docs')} className="text-sm text-[#58a6ff] hover:underline">{t('Read the reference guides', 'বিস্তারিত guide পড়ুন')} <ChevronRight className="inline w-4 h-4" /></button>
+              <button onClick={() => onOpenLab('practice')} className="text-sm text-[#58a6ff] hover:underline">{t('Try scenario practice', 'Scenario অনুশীলন করুন')} <ChevronRight className="inline w-4 h-4" /></button>
+            </div>
+            <div className="mt-6 border-t border-[#30363d] pt-5">
+              <h4 className="font-semibold text-white">{t('Check your understanding', 'যা শিখলেন যাচাই করুন')}</h4>
+              <p className="text-sm mt-2">{selectedLesson.question}</p>
+              <div className="mt-3 space-y-2" role="radiogroup" aria-label={selectedLesson.question}>{selectedLesson.choices.map((choice, index) => <label key={choice} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer text-sm ${selectedAnswer === index ? 'border-[#58a6ff] bg-[#58a6ff]/10' : 'border-[#30363d]'}`}><input type="radio" name={`lesson-${selectedLesson.id}`} checked={selectedAnswer === index} onChange={() => { setSelectedAnswer(index); setShowFeedback(false); }} />{choice}</label>)}</div>
+              {!allPreviousComplete && <p className="text-xs text-[#d29922] mt-3">{t('Complete earlier lessons first. You can still read and try this one.', 'আগের পাঠগুলো আগে শেষ করুন। এই পাঠটি পড়তে ও চেষ্টা করতে পারবেন।')}</p>}
+              {showFeedback && <p role="status" className={`text-sm mt-3 ${selectedAnswer === selectedLesson.answer ? 'text-[#3fb950]' : 'text-[#f85149]'}`}>{selectedAnswer === selectedLesson.answer ? `${t('Correct.', 'সঠিক।')} ${selectedLesson.feedback}${allPreviousComplete ? '' : ` ${t('Finish earlier lessons to save progress.', 'Progress সংরক্ষণ করতে আগের পাঠগুলো শেষ করুন।')}`}` : t('Not quite. Review the explanation and try again.', 'সঠিক হয়নি। ব্যাখ্যাটি আবার পড়ে চেষ্টা করুন।')}</p>}
+              <div className="flex flex-wrap gap-2 mt-4"><button onClick={checkAnswer} disabled={selectedAnswer === null} className="px-4 py-2 rounded-lg bg-[#238636] text-white text-sm font-semibold disabled:opacity-40">{t('Check answer', 'উত্তর যাচাই')}</button>{completed.includes(selectedLesson.id) && selectedIndex < courseLessons.length - 1 && <button onClick={nextLesson} className="px-4 py-2 rounded-lg border border-[#58a6ff] text-[#58a6ff] text-sm">{t('Next lesson', 'পরের পাঠ')} <ChevronRight className="inline w-4 h-4" /></button>}</div>
+            </div>
+          </article>
         </div>
         <aside className="rounded-2xl border border-[#30363d] bg-[#161b22] p-5">
           <div className="flex items-center gap-2 mb-4"><Award className="w-5 h-5 text-[#d29922]" /><h2 className="font-bold text-white">Badges</h2></div>
